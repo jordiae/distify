@@ -9,9 +9,6 @@ import logging
 
 log = logging.getLogger(__name__)
 
-#RAY_ADDRESS = 'auto'
-#REDIS_PASSWORD = '5241590000000000'
-
 
 class Globals:
     def __init__(self):
@@ -33,7 +30,6 @@ class Mapper:
         log.info(x)
 
     def __call__(self, x):
-        print("hello")
         self.process(x)
         return hash(x)
 
@@ -53,8 +49,6 @@ class Processor:
         self.stream = stream
         self.frequency = frequency
 
-        print(os.getpid())
-
         self.con = sqlite3.connect('checkpoint.db', check_same_thread=False)
         self.cur = self.con.cursor()
 
@@ -69,34 +63,26 @@ class Processor:
         self.cur.execute(index_sql)
 
     def run_stream(self):
-        print(os.getpid())
         idx = -1
         for e in tqdm(self.stream):
             h = hash(e)
-            print(e, self.done(h))
             idx += 1
 
             if self.done(h):
                 continue
             self.cur.execute(f"INSERT INTO elements VALUES ({h}, {h})")
-            #if idx % self.frequency == 0:
-            self.con.commit()
+            if idx % self.frequency == 0:
+                self.con.commit()
             yield e
 
-
     def done(self, x):
-        print(os.getpid())
         self.cur.execute(f"SELECT * FROM elements WHERE hash = {x}")
         data = self.cur.fetchall()
-        print(len(data) == 0)
         return len(data) != 0
 
     def run(self):
         work_dir = os.getcwd()
-        #ray.init(address=RAY_ADDRESS, redis_password=REDIS_PASSWORD)
         with Pool(initializer=self._initialize_mappers, initargs=(self.mapper_class.mapper_factory, work_dir)) as pool:
-            #for e in self.run_stream():
-            #    self._map_f(e)
             res = pool.imap_unordered(self._map_f, self.run_stream())
             for _ in res:
                 pass

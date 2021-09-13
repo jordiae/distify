@@ -7,8 +7,8 @@ hydra:
       init:
         address: 'auto'
         redis_password: '5241590000000000'
-  run:
-    dir: 'outputs/2021-09-13/16-12-46'
+#  run:
+#    dir: 'outputs/2021-09-13/16-12-46'
 
 frequency: 100
 checkpoint: null
