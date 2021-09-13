@@ -2,10 +2,6 @@ from parallel import Mapper, Processor
 import logging
 import hydra
 from omegaconf import DictConfig
-from hydra import compose
-from hydra.utils import to_absolute_path
-from omegaconf import OmegaConf
-import os
 
 log = logging.getLogger(__name__)
 
