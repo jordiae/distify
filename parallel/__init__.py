@@ -44,10 +44,10 @@ class Mapper:
 
 
 class Processor:
-    def __init__(self, mapper_class, stream, frequency=100):
+    def __init__(self, mapper_class, stream, checkpoint_frequency):
         self.mapper_class = mapper_class
         self.stream = stream
-        self.frequency = frequency
+        self.checkpoint_frequency = checkpoint_frequency
 
         self.con = sqlite3.connect('checkpoint.db', check_same_thread=False)
         self.cur = self.con.cursor()
@@ -65,13 +65,12 @@ class Processor:
     def run_stream(self):
         idx = -1
         for e in tqdm(self.stream):
-            h = hash(e)
             idx += 1
-
+            h = hash(e)
             if self.done(h):
                 continue
             self.cur.execute(f"INSERT INTO elements VALUES ({h}, {h})")
-            if idx % self.frequency == 0:
+            if idx % self.checkpoint_frequency == 0:
                 self.con.commit()
             yield e
 

@@ -15,7 +15,7 @@ class MyMapper(Mapper):
         super().__init__()
         self.non_pickable_dependency = lambda x: x+1
         self.write_path = self.get_unique_path() + '.txt'
-        self.fd = open(self.write_path , 'a')
+        self.fd = open(self.write_path, 'a')
 
     def process(self, x):
         self.fd.write(str(self.non_pickable_dependency(x)) + '\n')
@@ -24,7 +24,7 @@ class MyMapper(Mapper):
 
 @hydra.main(config_path="conf", config_name="config")
 def main(cfg: DictConfig) -> None:
-    processor = Processor(stream=my_stream(), mapper_class=MyMapper, frequency=cfg.frequency)
+    processor = Processor(stream=my_stream(), mapper_class=MyMapper, checkpoint_frequency=cfg.checkpoint_frequency)
     processor.run()
 
 
