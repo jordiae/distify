@@ -2,8 +2,8 @@
 
 Steps:
 
-1. Run: python app.py
-2. Simulate crash: Press Ctrl-C before the execution finishes to simulate crash.
-3. Resume job: In conf/config.yaml, uncomment the commented lines, and put the relative path of the output of step 1 (outputs/date/time).
-
-Alternatively, python app.py hydra.run.dir=outputs/date/time should also work.
+0. Install (requirements.txt)
+1. cd example/basic
+2. Run: python app.py
+3. Simulate crash: Press Ctrl-C before the execution finishes to simulate crash.
+4. Resume job: python my_app.py hydra.run.dir=outputs/2021-09-14/08-54-10 (where hydra.run.dir is the output of the execution to be resumed)
