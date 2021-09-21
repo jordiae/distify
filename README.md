@@ -1,6 +1,6 @@
 # distify
 
-Wrapper araound Ray for easy distributed processing in Python.
+Wrapper around Ray for easy distributed processing in Python.
 
 ## Features
 
