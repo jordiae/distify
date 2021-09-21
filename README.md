@@ -1,6 +1,8 @@
 # distify
 
-Wrapper around Ray for easy distributed processing in Python. **Disclaimer**: I use it for some of my projects, but there is no guarantee that the code will work as expected or that future versions will be backward compatible.
+Wrapper around Ray for easy distributed processing in Python.
+
+**Disclaimer**: I use it for some of my projects, but there is no guarantee that the code will work as expected or that future versions will be backward compatible.
 
 ## Install
 
