@@ -121,7 +121,8 @@ def exit_after():
 class Worker:
     def __init__(self):
         self.process_id = os.uname()[1] + '_' + str(os.getpid())
-
+        self.logger = logging.getLogger(self.process_id)
+        self.logger.addHandler(TqdmLoggingHandler())
     def get_unique_path(self):
         ts = timestamp()
         extra_id = uuid.uuid4().hex
@@ -133,11 +134,6 @@ class Worker:
 
 
 class Mapper(Worker):
-
-    def __init__(self):
-        super().__init__()
-        self.logger = logging.getLogger(self.process_id)
-        self.logger.addHandler(TqdmLoggingHandler())
 
     def map(self, x) -> None:
         raise NotImplementedError
