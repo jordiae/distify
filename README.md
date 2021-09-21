@@ -2,6 +2,10 @@
 
 Wrapper around Ray for easy distributed processing in Python.
 
+## Install
+
+    pip install distify
+
 ## Features
 
 - Multiple backends: Ray, Multiprocessing, Multithreading, Sequential.
@@ -14,18 +18,16 @@ Wrapper around Ray for easy distributed processing in Python.
 
 ## Quickstart/usage
 
-Install:
+Please refer to this example: https://github.com/jordiae/distify/tree/main/examples/basic
 
-    pip install distify
-  
-and start from this example: https://github.com/jordiae/distify/tree/main/examples/basic
+## Documentation
 
-To run it:
+TODO
 
-    python app.py
-  
-To resume the execution (if interrupted):
+## LICENSE
 
-    python app.py hydra.run.dir=outputs/2021-09-14/08-54-10
-    
-(where hydra.run.dir is the output of the execution to be resumed)
+MIT
+
+## Author
+
+Jordi Armengol Estapé
