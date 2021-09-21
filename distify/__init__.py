@@ -123,6 +123,7 @@ class Worker:
         self.process_id = os.uname()[1] + '_' + str(os.getpid())
         self.logger = logging.getLogger(self.process_id)
         self.logger.addHandler(TqdmLoggingHandler())
+
     def get_unique_path(self):
         ts = timestamp()
         extra_id = uuid.uuid4().hex
@@ -195,6 +196,7 @@ class Processor:
         self.reducer_class = reducer_class
         self.reducer_args = reducer_args
         self.distify_cfg = distify_cfg
+        self.logger = logging.getLogger('DISTIFY MAIN')
 
         self.con = sqlite3.connect(CHECKPOINT_DB_PATH, check_same_thread=SQL_CHECK_SAME_THREAD)
         self.cur = self.con.cursor()
@@ -266,14 +268,21 @@ class Processor:
             pool = SingleProcessPool
         results = []
         return_value = None
+
         with pool(initializer=self._initialize, initargs=(self.mapper_class.factory, work_dir,
                                                           self.mapper_args,
                                                           self.distify_cfg.parallelize_checkpoint_retrieval,
-                                                          self.reducer_class.factory,
-                                                          self.reducer_args,
+                                                          self.reducer_class.factory if self.reducer_class is not None else None,
+                                                          self.reducer_args if self.reducer_class is not None else None,
                                                           self.timeout
                                                           )) as p:
-
+            self._initialize(self.mapper_class.factory, work_dir,
+                             self.mapper_args,
+                             self.distify_cfg.parallelize_checkpoint_retrieval,
+                             self.reducer_class.factory if self.reducer_class is not None else None,
+                             self.reducer_args if self.reducer_class is not None else None,
+                             self.timeout
+                             )
             if self.distify_cfg.parallelize_checkpoint_retrieval:
                 new_stream = self.filter_pool(p, self.not_done_global, self.stream)
                 # TODO: close connection for all nodes except master
@@ -305,6 +314,7 @@ class Processor:
                         reduced, log_message = self._reduce_f(value, results)
                         if log_message is not None:
                             pbar.set_description(log_message)
+                            # TODO: Also log log_message, but only to file, not to console
                         results = []
                         reduced_dump = json.dumps(reduced)
                         sql = f''' UPDATE reduce
