@@ -12,6 +12,7 @@ from hydra.core.config_store import ConfigStore
 import contextlib
 import json
 import threading
+from typing import Optional
 try:
     import thread
 except ImportError:
@@ -26,13 +27,34 @@ CHECKPOINT_DB_PATH = 'checkpoint.db'
 def timestamp():
     return time.strftime("%Y-%m-%d-%H%M")
 
-# logging.basicConfig(filename='distify' + timestamp() + '.log', level=logging.INFO)
-
 # TODO: improve logging
 # TODO: test multiple backends (mp, ray, threads)
 # TODO: typing
-# TODO: exit after and sleep?
+# TODO: timeout doesnt work with sleep?
 # TODO: Improve logging, interaction with tqdm, etc
+# TODO: pip
+# TODO: CI
+# TODO: testing
+# TODO: Slurm
+
+
+class TqdmLoggingHandler(logging.StreamHandler):
+    """Avoid tqdm progress bar interruption by logger's output to console"""
+    # see logging.StreamHandler.eval method:
+    # https://github.com/python/cpython/blob/d2e2534751fd675c4d5d3adc208bf4fc984da7bf/Lib/logging/__init__.py#L1082-L1091
+    # and tqdm.write method:
+    # https://github.com/tqdm/tqdm/blob/f86104a1f30c38e6f80bfd8fb16d5fcde1e7749f/tqdm/std.py#L614-L620
+
+    def emit(self, record):
+        try:
+            tqdm.write('\n', end=self.terminator)
+            #  msg = '\n' + self.format(record) + '\n'
+            #  tqdm.write(msg, end=self.terminator)
+        except RecursionError:
+            raise
+        except Exception:
+            self.handleError(record)
+
 
 @dataclass
 class DistifyConfig:
@@ -42,6 +64,7 @@ class DistifyConfig:
     # Then SQL connection should be initialized for each node etc
     parallelize_checkpoint_retrieval: bool
     requires_order: bool
+    timeout: Optional[int]
 
 
 def register_configs():
@@ -61,14 +84,12 @@ class Globals:
         self.F_REDUCERS = None
         self.sql_con = None
         self.sql_cur = None
-        self.exit_after_seconds = None
+        self.timeout = None
 
 
 G = Globals()
 
 # Credits: https://stackoverflow.com/questions/492519/timeout-on-a-function-call
-
-
 def quit_function(fn_name):
     # sys.stderr.flush()
     thread.interrupt_main()
@@ -81,8 +102,8 @@ def exit_after():
     '''
     def outer(fn):
         def inner(*args, **kwargs):
-            if G.exit_after_seconds is not None:
-                timer = threading.Timer(G.exit_after_seconds, quit_function, args=[fn.__name__])
+            if G.timeout is not None:
+                timer = threading.Timer(G.timeout, quit_function, args=[fn.__name__])
                 timer.start()
                 try:
                     result = fn(*args, **kwargs)
@@ -100,8 +121,6 @@ def exit_after():
 class Worker:
     def __init__(self):
         self.process_id = os.uname()[1] + '_' + str(os.getpid())
-        self.logger = logging.getLogger(self.process_id)
-        # logging.basicConfig(filename=self.process_id + '.log', level=logging.INFO)
 
     def get_unique_path(self):
         ts = timestamp()
@@ -114,9 +133,11 @@ class Worker:
 
 
 class Mapper(Worker):
-    def __init__(self, exit_after_seconds = None):
+
+    def __init__(self):
         super().__init__()
-        self.exit_after_seconds = exit_after_seconds
+        self.logger = logging.getLogger(self.process_id)
+        self.logger.addHandler(TqdmLoggingHandler())
 
     def map(self, x) -> None:
         raise NotImplementedError
@@ -170,7 +191,7 @@ class Processor:
         self.stream = stream
         if distify_cfg.requires_order:
             self.stream = sorted(list)
-        self.exit_after_seconds = distify_cfg.exit_after_seconds
+        self.timeout = distify_cfg.timeout
         self.checkpoint_frequency = distify_cfg.checkpoint_frequency
         self.mapper_args = mapper_args
         self.parallel_backend = distify_cfg.parallel_backend
@@ -254,7 +275,7 @@ class Processor:
                                                           self.distify_cfg.parallelize_checkpoint_retrieval,
                                                           self.reducer_class.factory,
                                                           self.reducer_args,
-                                                          self.exit_after_seconds
+                                                          self.timeout
                                                           )) as p:
 
             if self.distify_cfg.parallelize_checkpoint_retrieval:
@@ -269,7 +290,10 @@ class Processor:
             else:
                 res = p.imap_unordered(self._map_f, new_stream)
 
-            for idx, e in enumerate(tqdm(res, initial=len(self.stream) - len(new_stream), total=len(new_stream))):
+            if len(new_stream) != len(self.stream):
+                self.logger.info(f'Resuming execution from checkpoint {os.getcwd()}')
+            pbar = tqdm(res, initial=len(self.stream) - len(new_stream), total=len(new_stream))
+            for idx, e in enumerate(pbar):
                 h = e['hash']
                 result = e['result']
                 results.append(result)
@@ -282,7 +306,9 @@ class Processor:
                         id_, value = current_reduced[0]
                         if value is not None:
                             value = json.loads(value)
-                        reduced = self._reduce_f(value, results)
+                        reduced, log_message = self._reduce_f(value, results)
+                        if log_message is not None:
+                            pbar.set_description(log_message)
                         results = []
                         reduced_dump = json.dumps(reduced)
                         sql = f''' UPDATE reduce
@@ -297,7 +323,7 @@ class Processor:
                 id_, value = current_reduced
                 if value is not None:
                     value = json.loads(value)
-                reduced = self._reduce_f(value, results)
+                reduced, ignored_log_message = self._reduce_f(value, results)
                 del results
                 reduced_dump = json.dumps(reduced)
                 sql = f''' UPDATE reduce
@@ -321,7 +347,7 @@ class Processor:
 
     @staticmethod
     def _initialize(mapper_factory, work_dir, mapper_args, parallelize_checkpoint_retrieval,
-                    reducer_factory, reducer_args, exit_after_seconds):
+                    reducer_factory, reducer_args, timeout):
         os.chdir(work_dir)  # needed for ray
         G.F_MAPPERS = mapper_factory(*mapper_args)
         if reducer_factory is not None:
@@ -329,7 +355,7 @@ class Processor:
         if parallelize_checkpoint_retrieval:
             G.sql_con = sqlite3.connect(CHECKPOINT_DB_PATH, check_same_thread=SQL_CHECK_SAME_THREAD)
             G.sql_cur = G.sql_con.cursor()
-        G.exit_after_seconds = exit_after_seconds
+        G.timeout = timeout
 
 
 __all__ = ['Processor', 'Mapper', 'Reducer']

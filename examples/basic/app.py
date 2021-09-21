@@ -1,10 +1,12 @@
+import os
+
 from distify import Mapper, Processor, Reducer
 import hydra
 import logging
 from omegaconf import DictConfig
 from dataclasses import dataclass
 from hydra.core.config_store import ConfigStore
-from pprint import pprint
+from pprint import pformat
 
 log = logging.getLogger(__name__)
 
@@ -51,8 +53,8 @@ class MyMapper(Mapper):
         self.fd = open(self.write_path, 'a')
 
     def map(self, x):
-        # if x % 10 == 0:
-        #    self.logger.info(f'Hi {x}')  # TODO: Improve logging, interaction with tqdm, etc
+        if x % 10000 == 0:
+            self.logger.info(f'Hi {x}')
         self.fd.write(str(self.non_pickable_dependency(x)) + '\n')
         self.fd.flush()
         # Returning a value is optional! But if we want to use a Reducer, we should return something
@@ -70,18 +72,21 @@ class MyReducer(Reducer):
         return 0
 
     def reduce(self, store, values):
-        self.logger.info(f'Reduced so far: {store}')
-        return store + sum(values)
+        result = store + sum(values)
+        log_message = f'Reduced so far: {result}'
+        return result, log_message
 
 
 @hydra.main(config_path="conf", config_name="base_config")
 def main(cfg: DictConfig) -> None:
-    pprint(cfg)
+    logging.info(pformat(cfg))
+    logging.info(os.getcwd())
     # Again, reducer_class and reducer_args arguments are optional!
     processor = Processor(stream=list(range(0, 20_000)), mapper_class=MyMapper, mapper_args=[cfg.app.mapper],
                           distify_cfg=cfg.distify, reducer_class=MyReducer, reducer_args=[cfg.app.reducer])
     reduced = processor.run()
-    print(reduced)
+    logging.info('Finished execution correctly')
+    logging.info(pformat(reduced))
 
 
 if __name__ == '__main__':
