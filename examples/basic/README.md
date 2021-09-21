@@ -1,5 +1,12 @@
 # Basic example
 
+## Download
+
+    git clone https://github.com/jordiae/distify
+    mv distify/examples/basic/ .
+    rm -rf distify/
+    cd basic
+
 ## Setup
 
     python -m venv venv
