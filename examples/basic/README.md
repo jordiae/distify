@@ -1,0 +1,15 @@
+# Basic example
+
+## Setup
+
+    python -m venv venv
+    source venv/bin/acticate
+    python -m pip install -r requirements.txt
+
+## Run
+
+    python app.py
+
+## Resume interrupted execution
+
+    python app.py hydra.run.dir=outputs/2021-09-14/08-54-10
