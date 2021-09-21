@@ -1,2 +1,4 @@
-my_custom_argument: 5
-my_other_custom_argument: 3
+mapper:
+  my_custom_argument: 5
+  my_other_custom_argument: 3
+reducer:
