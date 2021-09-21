@@ -17,6 +17,8 @@ try:
     import thread
 except ImportError:
     import _thread as thread
+from zoo.ray import RayContext
+from zoo import init_spark_on_yarn, init_spark_on_local, init_spark_on_k8s, init_spark_standalone
 
 # TODO: fault tolerance? https://docs.ray.io/en/latest/auto_examples/plot_example-lm.html
 
@@ -192,7 +194,8 @@ class Processor:
         self.checkpoint_frequency = distify_cfg.checkpoint_frequency
         self.mapper_args = mapper_args
         self.parallel_backend = distify_cfg.parallel_backend
-        assert self.parallel_backend in ['ray', 'mp', 'mt', 'seq']
+        assert self.parallel_backend in ['ray', 'mp', 'mt', 'seq', 'ray-spark-local', 'ray-spark-yarn', 'ray-spark-k8s',
+                                         'ray-spark-standalone', 'ray-aws']
         self.reducer_class = reducer_class
         self.reducer_args = reducer_args
         self.distify_cfg = distify_cfg
@@ -264,8 +267,15 @@ class Processor:
             pool = MPPool
         elif self.parallel_backend == 'mt':
             pool = MTPool
-        else:
+        elif self.parallel_backend == 'ray-spark-local':
+            pool = RayPool
+            sc = init_spark_on_local()
+            ray_ctx = RayContext(sc=sc, object_store_memory="2g")
+            ray_ctx.init()
+        elif self.parallel_backend == 'seq':
             pool = SingleProcessPool
+        else:
+            raise NotImplementedError(self.parallel_backend)
         results = []
         return_value = None
 

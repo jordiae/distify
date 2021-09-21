@@ -12,7 +12,7 @@ hydra:
 
 distify:
   # can be : 'ray', 'mp' (multiprocessing), 'mt' (multithreading), 'seq' (sequential, for debugging). 'ray' is recommended
-  parallel_backend: 'ray'
+  parallel_backend: 'ray-spark-local'
   parallelize_checkpoint_retrieval: True
   checkpoint_frequency: 10
   requires_order: False
