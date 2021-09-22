@@ -366,6 +366,6 @@ class Processor:
         G.timeout = timeout
 
 
-__version__ = '0.1'
+__version__ = '0.1.5'
 
 __all__ = ['Processor', 'Mapper', 'Reducer', '__version__']
