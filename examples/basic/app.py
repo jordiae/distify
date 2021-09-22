@@ -40,11 +40,6 @@ def register_configs():
 register_configs()
 
 
-def my_stream():
-    # Must be list, not generator
-    return list(range(0, 20_000))
-
-
 class MyMapper(Mapper):
     def __init__(self, cfg: MyMapperConfig):
         super().__init__()
@@ -82,6 +77,7 @@ def main(cfg: DictConfig) -> None:
     logging.info(pformat(cfg))
     logging.info(os.getcwd())
     # Again, reducer_class and reducer_args arguments are optional!
+    # Stream must be list, not generator
     processor = Processor(stream=list(range(0, 20_000)), mapper_class=MyMapper, mapper_args=[cfg.app.mapper],
                           distify_cfg=cfg.distify, reducer_class=MyReducer, reducer_args=[cfg.app.reducer])
     reduced = processor.run()
