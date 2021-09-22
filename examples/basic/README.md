@@ -10,7 +10,7 @@
 ## Setup
 
     python -m venv venv
-    source venv/bin/acticate
+    source venv/bin/activate
     python -m pip install -r requirements.txt
 
 ## Run
