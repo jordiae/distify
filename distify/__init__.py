@@ -197,29 +197,31 @@ class Processor:
         self.reducer_args = reducer_args
         self.distify_cfg = distify_cfg
         self.logger = logging.getLogger('DISTIFY MAIN')
+        restoring = os.path.exists(CHECKPOINT_DB_PATH)
 
         self.con = sqlite3.connect(CHECKPOINT_DB_PATH, check_same_thread=SQL_CHECK_SAME_THREAD)
         self.cur = self.con.cursor()
 
         # Checkpoint
-        sql_create_tasks_table = """CREATE TABLE IF NOT EXISTS elements (
-                                            id integer PRIMARY KEY,
-                                            hash integer
-                                        );"""
-        self.cur.execute(sql_create_tasks_table)
-        index_sql = "CREATE INDEX IF NOT EXISTS hash_index ON elements(hash)"
-        self.cur.execute(index_sql)
-
-        # Reduced
-        if reducer_class is not None:
-            sql_create_tasks_table = """CREATE TABLE IF NOT EXISTS reduce (
-                                                        id integer PRIMARY KEY,
-                                                        value text
-                                                    );"""
+        if not restoring:
+            sql_create_tasks_table = """CREATE TABLE IF NOT EXISTS elements (
+                                                id integer PRIMARY KEY,
+                                                hash integer
+                                            );"""
             self.cur.execute(sql_create_tasks_table)
-            self.cur.execute(f"INSERT INTO reduce VALUES (0, {json.dumps(None)})")
+            index_sql = "CREATE INDEX IF NOT EXISTS hash_index ON elements(hash)"
+            self.cur.execute(index_sql)
 
-        self.con.commit()
+            # Reduced
+            if reducer_class is not None:
+                sql_create_tasks_table = """CREATE TABLE IF NOT EXISTS reduce (
+                                                            id integer PRIMARY KEY,
+                                                            value text
+                                                        );"""
+                self.cur.execute(sql_create_tasks_table)
+                self.cur.execute(f"INSERT INTO reduce VALUES (0, {json.dumps(None)})")
+
+            self.con.commit()
         if self.distify_cfg.parallelize_checkpoint_retrieval:
             self.con.close()
             del self.cur
