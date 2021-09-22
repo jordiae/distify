@@ -1,12 +1,11 @@
 import os
-
-from distify import Mapper, Processor, Reducer
 import hydra
 import logging
 from omegaconf import DictConfig
 from dataclasses import dataclass
 from hydra.core.config_store import ConfigStore
 from pprint import pformat
+from distify import Mapper, Processor, Reducer
 
 log = logging.getLogger(__name__)
 
