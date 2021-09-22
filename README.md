@@ -6,7 +6,7 @@ Wrapper around Ray for easy distributed processing in Python.
 
 ## Install
 
-    pip install distify
+    pip install distify --upgrade
 
 ## Features
 
