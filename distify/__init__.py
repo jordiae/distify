@@ -299,7 +299,7 @@ class Processor:
 
             if len(new_stream) != len(self.stream):
                 self.logger.info(f'Resuming execution from checkpoint {os.getcwd()}')
-            pbar = tqdm(res, initial=len(self.stream) - len(new_stream), total=len(new_stream))
+            pbar = tqdm(res, initial=len(self.stream) - len(new_stream), total=len(self.stream))
             for idx, e in enumerate(pbar):
                 h = e['hash']
                 result = e['result']
@@ -366,6 +366,6 @@ class Processor:
         G.timeout = timeout
 
 
-__version__ = '0.1.5'
+__version__ = '0.1.6'
 
 __all__ = ['Processor', 'Mapper', 'Reducer', '__version__']
