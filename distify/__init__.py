@@ -13,6 +13,7 @@ import contextlib
 import json
 import threading
 from typing import Optional
+from pyspark import SparkContext, SparkConf
 try:
     import thread
 except ImportError:
@@ -38,6 +39,7 @@ def timestamp():
 # TODO: CI
 # TODO: testing
 # TODO: Slurm
+# TODO: Spark
 
 
 class TqdmLoggingHandler(logging.StreamHandler):
@@ -268,10 +270,17 @@ class Processor:
         elif self.parallel_backend == 'mt':
             pool = MTPool
         elif self.parallel_backend == 'ray-spark-local':
+
+            conf = vars(SparkConf().setAppName("distify").setMaster("local"))
+            #sc = SparkContext(conf=conf)
+            os.environ['SPARK_LOCAL_IP'] = 'localhost'
             pool = RayPool
-            sc = init_spark_on_local()
+            sc = init_spark_on_local(conf=conf)
             ray_ctx = RayContext(sc=sc, object_store_memory="2g")
             ray_ctx.init()
+        elif self.parallel_backend == 'ray-spark-yarn':
+            # See https://medium.com/riselab/rayonspark-running-emerging-ai-applications-on-big-data-clusters-with-ray-and-analytics-zoo-923e0136ed6a
+            raise NotImplementedError(self.parallel_backend)
         elif self.parallel_backend == 'seq':
             pool = SingleProcessPool
         else:
