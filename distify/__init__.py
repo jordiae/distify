@@ -341,8 +341,9 @@ class Processor:
                 self.con.commit()
                 return_value = reduced
         self.con.close()
-        with open('reduced.json', 'w', encoding='utf-8') as f:
-            json.dump(reduced, f, ensure_ascii=False, indent=4)
+        if self.reducer_class is not None:
+            with open('reduced.json', 'w', encoding='utf-8') as f:
+                json.dump(reduced, f, ensure_ascii=False, indent=4)
         return return_value
 
     @staticmethod
