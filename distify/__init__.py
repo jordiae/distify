@@ -58,7 +58,9 @@ class TqdmLoggingHandler(logging.StreamHandler):
 
 @dataclass
 class DistifyConfig:
-    checkpoint_frequency: int
+    # checkpoint_frequency: int
+    log_frequency: int
+    chunksize: int
     parallel: bool
     # Inside pool?
     # Then SQL connection should be initialized for each node etc
@@ -189,7 +191,7 @@ class Processor:
         if distify_cfg.requires_order:
             self.stream = sorted(list)
         self.timeout = distify_cfg.timeout
-        self.checkpoint_frequency = distify_cfg.checkpoint_frequency
+        # self.checkpoint_frequency = distify_cfg.checkpoint_frequency
         self.mapper_args = mapper_args
         self.parallel_backend = distify_cfg.parallel_backend
         assert self.parallel_backend in ['ray', 'mp', 'mt', 'seq']
@@ -268,8 +270,7 @@ class Processor:
             pool = MTPool
         else:
             pool = SingleProcessPool
-        results = []
-        return_value = None
+        result = None
 
         with pool(initializer=self._initialize, initargs=(self.mapper_class.factory, work_dir,
                                                           self.mapper_args,
@@ -293,9 +294,9 @@ class Processor:
 
             if self.distify_cfg.requires_order:
                 new_stream = sorted(new_stream)
-                res = p.imap(self._map_f, new_stream)
+                res = p.imap(self._map_f, new_stream, chunksize=self.distify_cfg.chunksize)
             else:
-                res = p.imap_unordered(self._map_f, new_stream)
+                res = p.imap_unordered(self._map_f, new_stream, chunksize=self.distify_cfg.chunksize)
 
             if len(new_stream) != len(self.stream):
                 self.logger.info(f'Resuming execution from checkpoint {os.getcwd()}')
@@ -303,48 +304,31 @@ class Processor:
             for idx, e in enumerate(pbar):
                 h = e['hash']
                 result = e['result']
-                results.append(result)
                 self.cur.execute(f"INSERT INTO elements VALUES ({h}, {h})")
-                if idx % self.checkpoint_frequency == 0:
-                    # TODO: reduction could (should?) be run in parallel
-                    if self.reducer_class is not None:
-                        self.cur.execute(f"SELECT id, value FROM reduce")
-                        current_reduced = self.cur.fetchall()
-                        id_, value = current_reduced[0]
-                        if value is not None:
-                            value = json.loads(value)
-                        reduced, log_message = self._reduce_f(value, results)
-                        if log_message is not None:
-                            pbar.set_description(log_message)
-                            # TODO: Also log log_message, but only to file, not to console
-                        results = []
-                        reduced_dump = json.dumps(reduced)
-                        sql = f''' UPDATE reduce
-                                      SET value = {reduced_dump} 
-                                      WHERE id = {id_}'''
-                        self.cur.execute(sql)
+                # TODO: reintroduce periodic checkpointing
+                # if idx % self.log_reduce_frequency == 0:
+                # TODO: reduction could (should?) be run in parallel
+                if self.reducer_class is not None:
+                    self.cur.execute(f"SELECT id, value FROM reduce")
+                    current_reduced = self.cur.fetchall()
+                    id_, value = current_reduced[0]
+                    if value is not None:
+                        value = json.loads(value)
+                    reduced, log_message = self._reduce_f(value, [result])
+                    if log_message is not None and idx % self.distify_cfg.log_frequency == 0:
+                        pbar.set_description(log_message)
+                        # TODO: Also log log_message, but only to file, not to console
+                    reduced_dump = json.dumps(reduced)
+                    sql = f''' UPDATE reduce
+                                  SET value = {reduced_dump} 
+                                  WHERE id = {id_}'''
+                    self.cur.execute(sql)
                     self.con.commit()
-            if self.reducer_class is not None and len(results) > 0:
-                self.cur.execute(f"SELECT id, value FROM reduce")
-                current_reduced = self.cur.fetchall()
-                current_reduced = current_reduced[0]
-                id_, value = current_reduced
-                if value is not None:
-                    value = json.loads(value)
-                reduced, ignored_log_message = self._reduce_f(value, results)
-                del results
-                reduced_dump = json.dumps(reduced)
-                sql = f''' UPDATE reduce
-                                                      SET value = {reduced_dump} 
-                                                      WHERE id = {id_}'''
-                self.cur.execute(sql)
-                self.con.commit()
-                return_value = reduced
         self.con.close()
         if self.reducer_class is not None:
             with open('reduced.json', 'w', encoding='utf-8') as f:
                 json.dump(reduced, f, ensure_ascii=False, indent=4)
-        return return_value
+        return result
 
     @staticmethod
     def _map_f(x):
@@ -367,6 +351,6 @@ class Processor:
         G.timeout = timeout
 
 
-__version__ = '0.1.8'
+__version__ = '0.1.9'
 
 __all__ = ['Processor', 'Mapper', 'Reducer', '__version__']
