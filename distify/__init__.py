@@ -170,10 +170,10 @@ def SingleProcessPool(initializer, initargs):
     initializer(*initargs)
 
     class NullPool:
-        def imap_unordered(self, f, l):
+        def imap_unordered(self, f, l, chunksize=1):
             return map(f, l)
 
-        def imap_ordered(self, f, l):
+        def imap_ordered(self, f, l, chunksize=1):
             return map(f, l)
 
         def map(self, f, l):
@@ -351,6 +351,6 @@ class Processor:
         G.timeout = timeout
 
 
-__version__ = '0.1.9'
+__version__ = '0.2.0'
 
 __all__ = ['Processor', 'Mapper', 'Reducer', '__version__']
