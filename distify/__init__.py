@@ -189,7 +189,7 @@ class Processor:
         self.mapper_class = mapper_class
         self.stream = stream
         if distify_cfg.requires_order:
-            self.stream = sorted(list)
+            self.stream = sorted(stream)
         self.timeout = distify_cfg.timeout
         # self.checkpoint_frequency = distify_cfg.checkpoint_frequency
         self.mapper_args = mapper_args
@@ -351,6 +351,6 @@ class Processor:
         G.timeout = timeout
 
 
-__version__ = '0.2.0'
+__version__ = '0.2.1'
 
 __all__ = ['Processor', 'Mapper', 'Reducer', '__version__']
