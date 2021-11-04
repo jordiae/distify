@@ -11,12 +11,13 @@ from dataclasses import dataclass
 from hydra.core.config_store import ConfigStore
 import contextlib
 import json
-import threading
 from typing import Optional
 try:
     import thread
 except ImportError:
     import _thread as thread
+from timeout_decorator import timeout
+from timeout_decorator.timeout_decorator import TimeoutError
 
 # TODO: fault tolerance? https://docs.ray.io/en/latest/auto_examples/plot_example-lm.html
 
@@ -91,32 +92,30 @@ class Globals:
 
 G = Globals()
 
-# Credits: https://stackoverflow.com/questions/492519/timeout-on-a-function-call
-def quit_function(fn_name):
-    # sys.stderr.flush()
-    thread.interrupt_main()
-
 
 def exit_after():
     '''
     use as decorator to exit process if
     function takes longer than s seconds
     '''
-    def outer(fn):
-        def inner(*args, **kwargs):
-            if G.timeout is not None:
-                timer = threading.Timer(G.timeout, quit_function, args=[fn.__name__])
-                timer.start()
-                try:
-                    result = fn(*args, **kwargs)
-                except:
-                    result = {'hash': hash(args[1]), 'result': None}
-                finally:
-                    timer.cancel()
-                return result
-            else:
+
+    if G.timeout is not None:
+        def outer(fn):
+            @timeout(G.timeout)
+            def inner(*args, **kwargs):
                 return fn(*args, **kwargs)
-        return inner
+
+            def inner2(*args, **kwargs):
+                try:
+                    res = inner(*args, **kwargs)
+                except TimeoutError as e:
+                    res = {'hash': hash(args[1]), 'result': None}
+                return res
+            return inner2
+        return outer
+
+    def outer(fn):
+        return fn
     return outer
 
 
@@ -320,8 +319,8 @@ class Processor:
                         # TODO: Also log log_message, but only to file, not to console
                     reduced_dump = json.dumps(reduced)
                     sql = f''' UPDATE reduce
-                                  SET value = {reduced_dump} 
-                                  WHERE id = {id_}'''
+                                                      SET value = '{reduced_dump}' 
+                                                      WHERE id = {id_}'''
                     self.cur.execute(sql)
                     self.con.commit()
         self.con.close()
@@ -351,6 +350,6 @@ class Processor:
         G.timeout = timeout
 
 
-__version__ = '0.2.1'
+__version__ = '0.2.2'
 
 __all__ = ['Processor', 'Mapper', 'Reducer', '__version__']
