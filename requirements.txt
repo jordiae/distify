@@ -30,6 +30,7 @@ jmespath==0.10.0
 jsonschema==3.2.0
 msgpack==1.0.2
 multidict==5.1.0
+multiprocessing-logging==0.3.1
 numpy==1.21.2
 nvidia-ml-py3==7.352.0
 omegaconf==2.1.1

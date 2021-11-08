@@ -10,7 +10,7 @@ README = (HERE / "README.md").read_text()
 # This call to setup() does all the work
 setup(
     name="distify",
-    version="0.2.3",
+    version="0.3.0",
     description="Easy wrapper for parallelizing Python executions",
     long_description=README,
     long_description_content_type="text/markdown",
@@ -62,6 +62,7 @@ setup(
         'jsonschema==3.2.0',
         'msgpack==1.0.2',
         'multidict==5.1.0',
+        'multiprocessing-logging==0.3.1',
         'numpy==1.21.2',
         'nvidia-ml-py3==7.352.0',
         'omegaconf==2.1.1',

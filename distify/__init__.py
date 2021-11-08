@@ -1,4 +1,3 @@
-import ray.util.multiprocessing.pool
 from ray.util.multiprocessing import Pool as RayPool
 from multiprocessing.pool import ThreadPool as MTPool
 from multiprocessing.pool import Pool as MPPool
@@ -19,6 +18,11 @@ except ImportError:
     import _thread as thread
 from timeout_decorator import timeout
 from timeout_decorator.timeout_decorator import TimeoutError
+
+# TODO: fix multi-threaded forks
+# Ideally, with set context 'spawn', but Ray doesn't support it?
+from multiprocessing_logging import install_mp_handler
+install_mp_handler()
 
 # TODO: fault tolerance? https://docs.ray.io/en/latest/auto_examples/plot_example-lm.html
 
@@ -141,7 +145,6 @@ class Mapper(Worker):
     def map(self, x) -> None:
         raise NotImplementedError
 
-    @exit_after()
     def __call__(self, x):
         # return self.process(x)
         return {'hash': hash(x), 'result': self.map(x)}
@@ -163,6 +166,35 @@ class Reducer(Worker):
         if len(values) == 0:
             values = [self.default_value]
         return self.reduce(store, values)
+
+
+class MapperComposer(Mapper):
+    def __init__(self, mappers, mappers_args):
+        self.mappers = [mapper.factory(mapper_args) for mapper, mapper_args in zip(mappers, mappers_args)]
+        super().__init__()
+
+    def map(self, x) -> None:
+        result = x
+        for mapper in self.mappers:
+            result = mapper(result)
+        return result
+
+
+class ReducerComposer(Worker):
+    def __init__(self, reducers, reducers_args):
+        self.reducers = [reducer.factory(reducer_args) for reducer, reducer_args in zip(reducers, reducers_args)]
+        super().__init__()
+
+    def reduce(self, store, values):
+        ac = store
+        for reducer in self.reducers:
+            ac = reducer(ac, values)
+        return ac
+
+    @property
+    def default_value(self):
+        return self.reducers[0].default_value
+
 
 
 @contextlib.contextmanager
@@ -302,7 +334,7 @@ class Processor:
                 self.logger.info(f'Resuming execution from checkpoint {os.getcwd()}')
             pbar = tqdm(res, initial=len(self.stream) - len(new_stream), total=len(self.stream))
             for idx, e in enumerate(pbar):
-                if isinstance(e, ray.util.multiprocessing.pool.PoolTaskError):
+                if isinstance(e, BaseException):
                     self.logger.info(f'Error in worker: {str(e)}')
                     continue
                 h = e['hash']
@@ -354,6 +386,6 @@ class Processor:
         G.timeout = timeout
 
 
-__version__ = '0.2.3'
+__version__ = '0.3.0'
 
-__all__ = ['Processor', 'Mapper', 'Reducer', '__version__']
+__all__ = ['Processor', 'Mapper', 'Reducer', '__version__', 'MapperComposer', 'ReducerComposer']
