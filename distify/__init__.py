@@ -1,3 +1,4 @@
+import ray.util.multiprocessing.pool
 from ray.util.multiprocessing import Pool as RayPool
 from multiprocessing.pool import ThreadPool as MTPool
 from multiprocessing.pool import Pool as MPPool
@@ -301,6 +302,9 @@ class Processor:
                 self.logger.info(f'Resuming execution from checkpoint {os.getcwd()}')
             pbar = tqdm(res, initial=len(self.stream) - len(new_stream), total=len(self.stream))
             for idx, e in enumerate(pbar):
+                if isinstance(e, ray.util.multiprocessing.pool.PoolTaskError):
+                    self.logger.info(f'Error in worker: {str(e)}')
+                    continue
                 h = e['hash']
                 result = e['result']
                 self.cur.execute(f"INSERT INTO elements VALUES ({h}, {h})")
@@ -350,6 +354,6 @@ class Processor:
         G.timeout = timeout
 
 
-__version__ = '0.2.2'
+__version__ = '0.2.3'
 
 __all__ = ['Processor', 'Mapper', 'Reducer', '__version__']
