@@ -297,7 +297,7 @@ class Processor:
         if self.parallel_backend == 'ray':
             pool = RayPool
         elif self.parallel_backend == 'mp':
-            pool = multiprocessing.get_context('spawn').Pool()
+            pool = multiprocessing.get_context('spawn').Pool
         elif self.parallel_backend == 'mt':
             pool = MTPool
         else:
@@ -386,6 +386,6 @@ class Processor:
         G.timeout = timeout
 
 
-__version__ = '0.3.1'
+__version__ = '0.3.2'
 
 __all__ = ['Processor', 'Mapper', 'Reducer', '__version__', 'MapperComposer', 'ReducerComposer']
