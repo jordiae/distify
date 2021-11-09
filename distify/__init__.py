@@ -1,6 +1,6 @@
 from ray.util.multiprocessing import Pool as RayPool
 from multiprocessing.pool import ThreadPool as MTPool
-from multiprocessing.pool import Pool as MPPool
+import multiprocessing
 import os
 import time
 import uuid
@@ -21,8 +21,8 @@ from timeout_decorator.timeout_decorator import TimeoutError
 
 # TODO: fix multi-threaded forks
 # Ideally, with set context 'spawn', but Ray doesn't support it?
-from multiprocessing_logging import install_mp_handler
-install_mp_handler()
+# from multiprocessing_logging import install_mp_handler
+# install_mp_handler()
 
 # TODO: fault tolerance? https://docs.ray.io/en/latest/auto_examples/plot_example-lm.html
 
@@ -297,7 +297,7 @@ class Processor:
         if self.parallel_backend == 'ray':
             pool = RayPool
         elif self.parallel_backend == 'mp':
-            pool = MPPool
+            pool = multiprocessing.get_context('spawn').Pool()
         elif self.parallel_backend == 'mt':
             pool = MTPool
         else:
@@ -386,6 +386,6 @@ class Processor:
         G.timeout = timeout
 
 
-__version__ = '0.3.0'
+__version__ = '0.3.1'
 
 __all__ = ['Processor', 'Mapper', 'Reducer', '__version__', 'MapperComposer', 'ReducerComposer']
