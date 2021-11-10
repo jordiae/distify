@@ -147,7 +147,12 @@ class Mapper(Worker):
 
     def __call__(self, x):
         # return self.process(x)
-        return {'hash': hash(x), 'result': self.map(x)}
+        try:
+            res = {'hash': hash(x), 'result': self.map(x)}
+        except BaseException as e:
+            self.logger.warning(f'Uncaught exception: {str(e)}')
+            res = {'hash': hash(x), 'result': None}
+        return res
 
 
 class Reducer(Worker):
@@ -194,7 +199,6 @@ class ReducerComposer(Worker):
     @property
     def default_value(self):
         return self.reducers[0].default_value
-
 
 
 @contextlib.contextmanager
@@ -386,6 +390,6 @@ class Processor:
         G.timeout = timeout
 
 
-__version__ = '0.3.2'
+__version__ = '0.3.3'
 
 __all__ = ['Processor', 'Mapper', 'Reducer', '__version__', 'MapperComposer', 'ReducerComposer']
