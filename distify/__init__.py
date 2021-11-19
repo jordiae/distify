@@ -1,4 +1,6 @@
 from ray.util.multiprocessing import Pool as RayPool
+import ray
+import psutil
 from multiprocessing.pool import ThreadPool as MTPool
 import multiprocessing
 import os
@@ -11,13 +13,7 @@ from dataclasses import dataclass
 from hydra.core.config_store import ConfigStore
 import contextlib
 import json
-from typing import Optional
-try:
-    import thread
-except ImportError:
-    import _thread as thread
-from timeout_decorator import timeout
-from timeout_decorator.timeout_decorator import TimeoutError
+from typing import Optional, Tuple, List
 
 # TODO: fix multi-threaded forks
 # Ideally, with set context 'spawn', but Ray doesn't support it?
@@ -42,6 +38,13 @@ def timestamp():
 # TODO: CI
 # TODO: testing
 # TODO: Slurm
+
+
+@dataclass
+class TaskResult:
+    result: Optional[List]
+    status: str
+    idx: Tuple[int, int]
 
 
 class TqdmLoggingHandler(logging.StreamHandler):
@@ -73,6 +76,10 @@ class DistifyConfig:
     parallelize_checkpoint_retrieval: bool
     requires_order: bool
     timeout: Optional[int]
+    timeout1: int
+    timeout2: int
+    mp_context: str
+    max_tasks: int
 
 
 def register_configs():
@@ -98,36 +105,10 @@ class Globals:
 G = Globals()
 
 
-def exit_after():
-    '''
-    use as decorator to exit process if
-    function takes longer than s seconds
-    '''
-
-    if G.timeout is not None:
-        def outer(fn):
-            @timeout(G.timeout)
-            def inner(*args, **kwargs):
-                return fn(*args, **kwargs)
-
-            def inner2(*args, **kwargs):
-                try:
-                    res = inner(*args, **kwargs)
-                except TimeoutError as e:
-                    res = {'hash': hash(args[1]), 'result': None}
-                return res
-            return inner2
-        return outer
-
-    def outer(fn):
-        return fn
-    return outer
-
-
 class Worker:
     def __init__(self):
         self.process_id = os.uname()[1] + '_' + str(os.getpid())
-        self.logger = logging.getLogger(self.process_id)
+        self.logger = logging.getLogger(self.process_id)  # TDOO: check worker logging
         self.logger.addHandler(TqdmLoggingHandler())
 
     def get_unique_path(self):
@@ -145,13 +126,20 @@ class Mapper(Worker):
     def map(self, x) -> None:
         raise NotImplementedError
 
-    def __call__(self, x):
+    def __call__(self, chunk) -> TaskResult:
+        #if len(chunk) == 1:
+        #    chunk = chunk[0]
+        chunk = list(zip(*chunk))
+        idxs = chunk[0]
+        chunk = chunk[1]
         # return self.process(x)
         try:
-            res = {'hash': hash(x), 'result': self.map(x)}
+            #res = {'hash': hash(x), 'result': self.map(x)}
+            res = TaskResult(result=[self.map(element) for element in chunk], status='OK', idx=idxs)
         except BaseException as e:
-            self.logger.warning(f'Uncaught exception: {str(e)}')
-            res = {'hash': hash(x), 'result': None}
+            #self.logger.warning(f'Uncaught exception: {str(e)}')
+            #res = {'hash': hash(x), 'result': None}
+            res = TaskResult(result=None, status='ERROR', idx=idxs)
         return res
 
 
@@ -201,11 +189,21 @@ class ReducerComposer(Worker):
         return self.reducers[0].default_value
 
 
+class DummySyncResult:
+    def __init__(self, result):
+        self.result = result
+
+    def get(self, timeout):
+        return self.result
+
 @contextlib.contextmanager
 def SingleProcessPool(initializer, initargs):
     initializer(*initargs)
 
     class NullPool:
+        def __init__(self, processes=1):
+            pass
+
         def imap_unordered(self, f, l, chunksize=1):
             return map(f, l)
 
@@ -214,6 +212,9 @@ def SingleProcessPool(initializer, initargs):
 
         def map(self, f, l):
             return list(map(f, l))
+
+        def apply_async(self, f, x):
+            return DummySyncResult(f(x))
 
     yield NullPool()
 
@@ -227,6 +228,12 @@ class Processor:
         if distify_cfg.requires_order:
             self.stream = sorted(stream)
         self.timeout = distify_cfg.timeout
+        if self.timeout is not None:
+            raise ValueError('cfg.timeout is deprecated')
+        if distify_cfg.parallelize_checkpoint_retrieval:
+            raise ValueError('cfg.parallelize_checkpoint_retrieval cannot be used anymore')
+        if distify_cfg.requires_order:
+            raise ValueError('cfg.requires_order cannot be used anymore')
         # self.checkpoint_frequency = distify_cfg.checkpoint_frequency
         self.mapper_args = mapper_args
         self.parallel_backend = distify_cfg.parallel_backend
@@ -236,6 +243,8 @@ class Processor:
         self.distify_cfg = distify_cfg
         self.logger = logging.getLogger('DISTIFY MAIN')
         restoring = os.path.exists(CHECKPOINT_DB_PATH)
+
+        self.not_done_list = None
 
         self.con = sqlite3.connect(CHECKPOINT_DB_PATH, check_same_thread=SQL_CHECK_SAME_THREAD)
         self.cur = self.con.cursor()
@@ -293,85 +302,152 @@ class Processor:
     def not_done_global(self, x):
         return not self.done_global(x)
 
-    def run(self):
+    def get_n_cpus(self):
+        if self.parallel_backend == 'ray':
+            return int(ray.available_resources()['CPU'])
+        elif self.parallel_backend == 'mp':
+            return multiprocessing.cpu_count()
+        elif self.parallel_backend == 'mt':
+            return psutil.cpu_count(logical=True)//psutil.cpu_count(logical=False)
+        else:
+            return 1
+
+    def process_task_result(self, task_result, pbar, iteration):
+        if isinstance(task_result, BaseException):
+            self.logger.info(f'Error in worker: {str(task_result)}')
+            reduced = None
+        elif isinstance(task_result, TaskResult):
+            idx = task_result.idx
+            work_done = len(idx)
+            pbar.update(work_done)
+            # print(idx, len(data[idx[0]:idx[1]]))
+            for i in idx:
+                self.not_done_list[i] = False
+            #hs = map(hash, task_result.idx)  # TODO/WIP: save idx, not hash of idx
+            hs = task_result.idx
+            result = task_result.result
+            for h in hs:
+                self.cur.execute(f"INSERT INTO elements VALUES ({h}, {h})")
+            # TODO: reintroduce periodic checkpointing
+            # if idx % self.log_reduce_frequency == 0:
+            # TODO: reduction could (should?) be run in parallel
+            if self.reducer_class is not None:
+                self.cur.execute(f"SELECT id, value FROM reduce")
+                current_reduced = self.cur.fetchall()
+                id_, value = current_reduced[0]
+                if value is not None:
+                    value = json.loads(value)
+                reduced, log_message = self._reduce_f(value, result)
+
+                if log_message is not None and iteration % self.distify_cfg.log_frequency == 0:
+                    pbar.set_description(log_message)
+                    # TODO: Also log log_message, but only to file, not to console
+                reduced_dump = json.dumps(reduced)
+                sql = f''' UPDATE reduce
+                                                                  SET value = '{reduced_dump}' 
+                                                                  WHERE id = {id_}'''
+                self.cur.execute(sql)
+                self.con.commit()
+            else:
+                reduced = None
+        else:
+            # Should never happen
+            raise RuntimeError()
+        return reduced
+
+    def run_with_restart(self):
         work_dir = os.getcwd()
 
-        if not self.distify_cfg.parallelize_checkpoint_retrieval:
-            new_stream = list(filter(self.not_done, self.stream))
+        self.not_done_list = list(map(self.not_done, self.stream))
+
+        # new_stream = list(filter(self.not_done, self.stream))
+        initial = len(self.stream) - sum(self.not_done_list)
+        total = len(self.stream)
+
         if self.parallel_backend == 'ray':
             pool = RayPool
         elif self.parallel_backend == 'mp':
-            pool = multiprocessing.get_context('spawn').Pool
+            pool = multiprocessing.get_context(self.distify_cfg.mp_context).Pool  # spawn
         elif self.parallel_backend == 'mt':
             pool = MTPool
         else:
             pool = SingleProcessPool
-        result = None
 
-        with pool(initializer=self._initialize, initargs=(self.mapper_class.factory, work_dir,
-                                                          self.mapper_args,
-                                                          self.distify_cfg.parallelize_checkpoint_retrieval,
-                                                          self.reducer_class.factory if self.reducer_class is not None else None,
-                                                          self.reducer_args if self.reducer_class is not None else None,
-                                                          self.timeout
-                                                          )) as p:
-            self._initialize(self.mapper_class.factory, work_dir,
-                             self.mapper_args,
-                             self.distify_cfg.parallelize_checkpoint_retrieval,
-                             self.reducer_class.factory if self.reducer_class is not None else None,
-                             self.reducer_args if self.reducer_class is not None else None,
-                             self.timeout
-                             )
-            if self.distify_cfg.parallelize_checkpoint_retrieval:
-                new_stream = self.filter_pool(p, self.not_done_global, self.stream)
-                # TODO: close connection for all nodes except master
-                self.con = sqlite3.connect(CHECKPOINT_DB_PATH, check_same_thread=SQL_CHECK_SAME_THREAD)
-                self.cur = self.con.cursor()
+        reduced = None
 
-            if self.distify_cfg.requires_order:
-                new_stream = sorted(new_stream)
-                res = p.imap(self._map_f, new_stream, chunksize=self.distify_cfg.chunksize)
-            else:
-                res = p.imap_unordered(self._map_f, new_stream, chunksize=self.distify_cfg.chunksize)
+        nproc = self.get_n_cpus()
+        assert self.distify_cfg.max_tasks >= nproc
 
-            if len(new_stream) != len(self.stream):
-                self.logger.info(f'Resuming execution from checkpoint {os.getcwd()}')
-            pbar = tqdm(res, initial=len(self.stream) - len(new_stream), total=len(self.stream))
-            for idx, e in enumerate(pbar):
-                if isinstance(e, BaseException):
-                    self.logger.info(f'Error in worker: {str(e)}')
-                    continue
-                h = e['hash']
-                result = e['result']
-                self.cur.execute(f"INSERT INTO elements VALUES ({h}, {h})")
-                # TODO: reintroduce periodic checkpointing
-                # if idx % self.log_reduce_frequency == 0:
-                # TODO: reduction could (should?) be run in parallel
-                if self.reducer_class is not None:
-                    self.cur.execute(f"SELECT id, value FROM reduce")
-                    current_reduced = self.cur.fetchall()
-                    id_, value = current_reduced[0]
-                    if value is not None:
-                        value = json.loads(value)
-                    reduced, log_message = self._reduce_f(value, [result])
-                    if log_message is not None and idx % self.distify_cfg.log_frequency == 0:
-                        pbar.set_description(log_message)
-                        # TODO: Also log log_message, but only to file, not to console
-                    reduced_dump = json.dumps(reduced)
-                    sql = f''' UPDATE reduce
-                                                      SET value = '{reduced_dump}' 
-                                                      WHERE id = {id_}'''
-                    self.cur.execute(sql)
-                    self.con.commit()
-        self.con.close()
+        if initial != 0:
+            self.logger.info(f'Resuming execution from checkpoint {os.getcwd()}')
+
+        n_not_done = sum(self.not_done_list)
+        with tqdm(initial=initial, total=total) as pbar:
+            while n_not_done > 0:
+                n_not_done = sum(self.not_done_list)
+                self.logger.info(f"Restarting Pool. {n_not_done} elements to go.")
+                # print(threading.active_count())
+                with pool(initializer=self._initialize, initargs=(self.mapper_class.factory, work_dir,
+                                                                  self.mapper_args,
+                                                                  self.distify_cfg.parallelize_checkpoint_retrieval,
+                                                                  self.reducer_class.factory if self.reducer_class is not None else None,
+                                                                  self.reducer_args if self.reducer_class is not None else None,
+                                                                  self.timeout
+                                                                  )) as p:
+                    self._initialize(self.mapper_class.factory, work_dir,
+                                     self.mapper_args,
+                                     self.distify_cfg.parallelize_checkpoint_retrieval,
+                                     self.reducer_class.factory if self.reducer_class is not None else None,
+                                     self.reducer_args if self.reducer_class is not None else None,
+                                     self.timeout
+                                     )  # TODO: check if needed
+
+                    self.con = sqlite3.connect(CHECKPOINT_DB_PATH, check_same_thread=SQL_CHECK_SAME_THREAD)
+                    self.cur = self.con.cursor()
+
+                    chunks = []
+                    current_chunk = []
+                    for i in range(len(self.stream)):
+                        if len(current_chunk) == self.distify_cfg.chunksize:
+                            chunks.append(current_chunk)
+                            current_chunk = []
+                            if len(chunks) == self.distify_cfg.max_tasks:
+                                break
+                        if self.not_done_list[i]:
+                            current_chunk.append((i, self.stream[i]))
+                    if len(current_chunk) > 0:
+                        chunks.append(current_chunk)
+
+                    tasks = [p.apply_async(self._map_f, chunks[i]) for i in range(len(chunks))]
+
+                    failed = []
+                    for iteration, task in enumerate(tasks):
+                        try:
+                            task_result = task.get(timeout=self.distify_cfg.timeout1)
+                            reduced = self.process_task_result(task_result, pbar, iteration=iteration)
+                        except TimeoutError:
+                            failed.append(task)
+                            for task in failed:
+                                try:
+                                    reduced = task_result = task.get(timeout=self.distify_cfg.timeout2)
+                                    self.process_task_result(task_result, pbar, iteration=iteration)
+                                except TimeoutError:
+                                    continue
+
+                            if len(failed) < nproc:
+                                self.logger.info(f"{len(failed)} processes are blocked, "
+                                                 f"but {nproc - len(failed)} remain.")
+                            else:
+                                self.con.close()
+                                break
         if self.reducer_class is not None:
             with open('reduced.json', 'w', encoding='utf-8') as f:
                 json.dump(reduced, f, ensure_ascii=False, indent=4)
-        return result
+        return reduced
 
     @staticmethod
-    def _map_f(x):
-        return G.F_MAPPERS(x)
+    def _map_f(args):
+        return G.F_MAPPERS(args)
 
     @staticmethod
     def _reduce_f(store, values):
@@ -389,7 +465,8 @@ class Processor:
             G.sql_cur = G.sql_con.cursor()
         G.timeout = timeout
 
+# TODO: if Ray, add working directory to path
 
-__version__ = '0.3.3'
+__version__ = '0.4.0'
 
 __all__ = ['Processor', 'Mapper', 'Reducer', '__version__', 'MapperComposer', 'ReducerComposer']

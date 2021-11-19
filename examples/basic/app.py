@@ -48,7 +48,7 @@ class MyMapper(Mapper):
 
     def map(self, x):
         if x % 10000 == 0:
-            self.logger.info(f'Hi {x}')
+            pass#self.logger.info(f'Hi {x}')
         self.fd.write(str(self.non_pickable_dependency(x)) + '\n')
         self.fd.flush()
         # Returning a value is optional! But if we want to use a Reducer, we should return something
@@ -77,9 +77,10 @@ def main(cfg: DictConfig) -> None:
     logging.info(os.getcwd())
     # Again, reducer_class and reducer_args arguments are optional!
     # Stream must be list, not generator
-    processor = Processor(stream=list(range(0, 20_000)), mapper_class=MyMapper, mapper_args=[cfg.app.mapper],
+    processor = Processor(stream=list(range(0, 10_000)), mapper_class=MyMapper, mapper_args=[cfg.app.mapper],
                           distify_cfg=cfg.distify, reducer_class=MyReducer, reducer_args=[cfg.app.reducer])
-    reduced = processor.run()
+    reduced = processor.run_with_restart()
+    assert reduced == sum(list(range(0, 10_000)))
     logging.info('Finished execution correctly')
     logging.info(pformat(reduced))
 
