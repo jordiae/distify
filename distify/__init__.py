@@ -80,6 +80,7 @@ class DistifyConfig:
     timeout2: int
     mp_context: str
     max_tasks: int
+    use_checkpoint: bool
 
 
 def register_configs():
@@ -242,37 +243,38 @@ class Processor:
         self.reducer_args = reducer_args
         self.distify_cfg = distify_cfg
         self.logger = logging.getLogger('DISTIFY MAIN')
-        restoring = os.path.exists(CHECKPOINT_DB_PATH)
+        self.reduced = None
 
-        self.not_done_list = None
+        if self.distify_cfg.use_checkpoint:
+            self.not_done_list = None
+            restoring = os.path.exists(CHECKPOINT_DB_PATH)
+            self.con = sqlite3.connect(CHECKPOINT_DB_PATH, check_same_thread=SQL_CHECK_SAME_THREAD)
+            self.cur = self.con.cursor()
 
-        self.con = sqlite3.connect(CHECKPOINT_DB_PATH, check_same_thread=SQL_CHECK_SAME_THREAD)
-        self.cur = self.con.cursor()
-
-        # Checkpoint
-        if not restoring:
-            sql_create_tasks_table = """CREATE TABLE IF NOT EXISTS elements (
-                                                id integer PRIMARY KEY,
-                                                hash integer
-                                            );"""
-            self.cur.execute(sql_create_tasks_table)
-            index_sql = "CREATE INDEX IF NOT EXISTS hash_index ON elements(hash)"
-            self.cur.execute(index_sql)
-
-            # Reduced
-            if reducer_class is not None:
-                sql_create_tasks_table = """CREATE TABLE IF NOT EXISTS reduce (
-                                                            id integer PRIMARY KEY,
-                                                            value text
-                                                        );"""
+            # Checkpoint
+            if not restoring:
+                sql_create_tasks_table = """CREATE TABLE IF NOT EXISTS elements (
+                                                    id integer PRIMARY KEY,
+                                                    hash integer
+                                                );"""
                 self.cur.execute(sql_create_tasks_table)
-                self.cur.execute(f"INSERT INTO reduce VALUES (0, {json.dumps(None)})")
+                index_sql = "CREATE INDEX IF NOT EXISTS hash_index ON elements(hash)"
+                self.cur.execute(index_sql)
 
-            self.con.commit()
-        if self.distify_cfg.parallelize_checkpoint_retrieval:
-            self.con.close()
-            del self.cur
-            del self.con
+                # Reduced
+                if reducer_class is not None:
+                    sql_create_tasks_table = """CREATE TABLE IF NOT EXISTS reduce (
+                                                                id integer PRIMARY KEY,
+                                                                value text
+                                                            );"""
+                    self.cur.execute(sql_create_tasks_table)
+                    self.cur.execute(f"INSERT INTO reduce VALUES (0, {json.dumps(None)})")
+
+                self.con.commit()
+            if self.distify_cfg.parallelize_checkpoint_retrieval:
+                self.con.close()
+                del self.cur
+                del self.con
 
     @staticmethod
     def filter_pool(pool, func, iterable):
@@ -312,7 +314,7 @@ class Processor:
         else:
             return 1
 
-    def process_task_result(self, task_result, pbar, iteration):
+    def process_task_result(self, task_result, pbar, iteration, current_reduced_no_checkpoint=None):
         if isinstance(task_result, BaseException):
             self.logger.info(f'Error in worker: {str(task_result)}')
             reduced = None
@@ -326,28 +328,34 @@ class Processor:
             #hs = map(hash, task_result.idx)  # TODO/WIP: save idx, not hash of idx
             hs = task_result.idx
             result = task_result.result
-            for h in hs:
-                self.cur.execute(f"INSERT INTO elements VALUES ({h}, {h})")
+            if self.distify_cfg.use_checkpoint:
+                for h in hs:
+                    self.cur.execute(f"INSERT INTO elements VALUES ({h}, {h})")
             # TODO: reintroduce periodic checkpointing
             # if idx % self.log_reduce_frequency == 0:
             # TODO: reduction could (should?) be run in parallel
+
             if self.reducer_class is not None:
-                self.cur.execute(f"SELECT id, value FROM reduce")
-                current_reduced = self.cur.fetchall()
-                id_, value = current_reduced[0]
-                if value is not None:
-                    value = json.loads(value)
+                if self.distify_cfg.use_checkpoint:
+                    self.cur.execute(f"SELECT id, value FROM reduce")
+                    current_reduced = self.cur.fetchall()
+                    id_, value = current_reduced[0]
+                    if value is not None:
+                        value = json.loads(value)
+                else:
+                    value = current_reduced_no_checkpoint
                 reduced, log_message = self._reduce_f(value, result)
 
                 if log_message is not None and iteration % self.distify_cfg.log_frequency == 0:
                     pbar.set_description(log_message)
                     # TODO: Also log log_message, but only to file, not to console
                 reduced_dump = json.dumps(reduced)
-                sql = f''' UPDATE reduce
-                                                                  SET value = '{reduced_dump}' 
-                                                                  WHERE id = {id_}'''
-                self.cur.execute(sql)
-                self.con.commit()
+                if self.distify_cfg.use_checkpoint:
+                    sql = f''' UPDATE reduce
+                                                                      SET value = '{reduced_dump}' 
+                                                                      WHERE id = {id_}'''
+                    self.cur.execute(sql)
+                    self.con.commit()
             else:
                 reduced = None
         else:
@@ -358,7 +366,7 @@ class Processor:
     def run_with_restart(self):
         work_dir = os.getcwd()
 
-        self.not_done_list = list(map(self.not_done, self.stream))
+        self.not_done_list = list(map(self.not_done, self.stream)) if self.distify_cfg.use_checkpoint else [True for _ in self.stream]
 
         # new_stream = list(filter(self.not_done, self.stream))
         initial = len(self.stream) - sum(self.not_done_list)
@@ -373,7 +381,7 @@ class Processor:
         else:
             pool = SingleProcessPool
 
-        reduced = None
+        self.reduced = None
 
         nproc = self.get_n_cpus()
         assert self.distify_cfg.max_tasks >= nproc
@@ -402,8 +410,9 @@ class Processor:
                                      self.timeout
                                      )  # TODO: check if needed
 
-                    self.con = sqlite3.connect(CHECKPOINT_DB_PATH, check_same_thread=SQL_CHECK_SAME_THREAD)
-                    self.cur = self.con.cursor()
+                    if self.distify_cfg.use_checkpoint:
+                        self.con = sqlite3.connect(CHECKPOINT_DB_PATH, check_same_thread=SQL_CHECK_SAME_THREAD)
+                        self.cur = self.con.cursor()
 
                     chunks = []
                     current_chunk = []
@@ -424,13 +433,15 @@ class Processor:
                     for iteration, task in enumerate(tasks):
                         try:
                             task_result = task.get(timeout=self.distify_cfg.timeout1)
-                            reduced = self.process_task_result(task_result, pbar, iteration=iteration)
+                            self.reduced = self.process_task_result(task_result, pbar, iteration=iteration,
+                                                                    current_reduced_no_checkpoint=self.reduced)
                         except TimeoutError:
                             failed.append(task)
                             for task in failed:
                                 try:
-                                    reduced = task_result = task.get(timeout=self.distify_cfg.timeout2)
-                                    self.process_task_result(task_result, pbar, iteration=iteration)
+                                    task_result = task.get(timeout=self.distify_cfg.timeout2)
+                                    self.reduced = self.process_task_result(task_result, pbar, iteration=iteration,
+                                                             current_reduced_no_checkpoint=self.reduced)
                                 except TimeoutError:
                                     continue
 
@@ -442,8 +453,8 @@ class Processor:
                                 break
         if self.reducer_class is not None:
             with open('reduced.json', 'w', encoding='utf-8') as f:
-                json.dump(reduced, f, ensure_ascii=False, indent=4)
-        return reduced
+                json.dump(self.reduced, f, ensure_ascii=False, indent=4)
+        return self.reduced
 
     @staticmethod
     def _map_f(args):
@@ -467,6 +478,6 @@ class Processor:
 
 # TODO: if Ray, add working directory to path
 
-__version__ = '0.4.0'
+__version__ = '0.5.0'
 
 __all__ = ['Processor', 'Mapper', 'Reducer', '__version__', 'MapperComposer', 'ReducerComposer']
