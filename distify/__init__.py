@@ -334,8 +334,8 @@ class Processor:
                     self.cur.execute(f"INSERT INTO elements VALUES ({h}, {h})")
             else:
                 with open(self.distify_cfg.txt_checkpoint_path, 'a') as f:
-                    for h in hs:
-                        f.write(f'{h}\n')
+                    for r in result:
+                        f.write(f'{r}\n')
 
             # TODO: reintroduce periodic checkpointing
             # if idx % self.log_reduce_frequency == 0:
@@ -484,6 +484,6 @@ class Processor:
 
 # TODO: if Ray, add working directory to path
 
-__version__ = '0.5.1'
+__version__ = '0.5.2'
 
 __all__ = ['Processor', 'Mapper', 'Reducer', '__version__', 'MapperComposer', 'ReducerComposer']
