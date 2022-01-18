@@ -80,7 +80,8 @@ class DistifyConfig:
     timeout2: int
     mp_context: str
     max_tasks: int
-    use_checkpoint: bool
+    use_checkpoint_sql: bool
+    txt_checkpoint_path: str
 
 
 def register_configs():
@@ -245,7 +246,7 @@ class Processor:
         self.logger = logging.getLogger('DISTIFY MAIN')
         self.reduced = None
 
-        if self.distify_cfg.use_checkpoint:
+        if self.distify_cfg.use_checkpoint_sql:
             self.not_done_list = None
             restoring = os.path.exists(CHECKPOINT_DB_PATH)
             self.con = sqlite3.connect(CHECKPOINT_DB_PATH, check_same_thread=SQL_CHECK_SAME_THREAD)
@@ -328,15 +329,20 @@ class Processor:
             #hs = map(hash, task_result.idx)  # TODO/WIP: save idx, not hash of idx
             hs = task_result.idx
             result = task_result.result
-            if self.distify_cfg.use_checkpoint:
+            if self.distify_cfg.use_checkpoint_sql:
                 for h in hs:
                     self.cur.execute(f"INSERT INTO elements VALUES ({h}, {h})")
+            else:
+                with open(self.distify_cfg.txt_checkpoint_path, 'a') as f:
+                    for h in hs:
+                        f.write(f'{h}\n')
+
             # TODO: reintroduce periodic checkpointing
             # if idx % self.log_reduce_frequency == 0:
             # TODO: reduction could (should?) be run in parallel
 
             if self.reducer_class is not None:
-                if self.distify_cfg.use_checkpoint:
+                if self.distify_cfg.use_checkpoint_sql:
                     self.cur.execute(f"SELECT id, value FROM reduce")
                     current_reduced = self.cur.fetchall()
                     id_, value = current_reduced[0]
@@ -350,7 +356,7 @@ class Processor:
                     pbar.set_description(log_message)
                     # TODO: Also log log_message, but only to file, not to console
                 reduced_dump = json.dumps(reduced)
-                if self.distify_cfg.use_checkpoint:
+                if self.distify_cfg.use_checkpoint_sql:
                     sql = f''' UPDATE reduce
                                                                       SET value = '{reduced_dump}' 
                                                                       WHERE id = {id_}'''
@@ -366,7 +372,7 @@ class Processor:
     def run_with_restart(self):
         work_dir = os.getcwd()
 
-        self.not_done_list = list(map(self.not_done, self.stream)) if self.distify_cfg.use_checkpoint else [True for _ in self.stream]
+        self.not_done_list = list(map(self.not_done, self.stream)) if self.distify_cfg.use_checkpoint_sql else [True for _ in self.stream]
 
         # new_stream = list(filter(self.not_done, self.stream))
         initial = len(self.stream) - sum(self.not_done_list)
@@ -410,7 +416,7 @@ class Processor:
                                      self.timeout
                                      )  # TODO: check if needed
 
-                    if self.distify_cfg.use_checkpoint:
+                    if self.distify_cfg.use_checkpoint_sql:
                         self.con = sqlite3.connect(CHECKPOINT_DB_PATH, check_same_thread=SQL_CHECK_SAME_THREAD)
                         self.cur = self.con.cursor()
 
@@ -478,6 +484,6 @@ class Processor:
 
 # TODO: if Ray, add working directory to path
 
-__version__ = '0.5.0'
+__version__ = '0.5.1'
 
 __all__ = ['Processor', 'Mapper', 'Reducer', '__version__', 'MapperComposer', 'ReducerComposer']

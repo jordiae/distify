@@ -23,4 +23,5 @@ distify:
   timeout2: 10
   mp_context: 'spawn'
   max_tasks: 1000
-  use_checkpoint: False
+  use_checkpoint_sql: False
+  txt_checkpoint_path: 'test.txt'
