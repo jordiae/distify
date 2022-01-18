@@ -484,6 +484,6 @@ class Processor:
 
 # TODO: if Ray, add working directory to path
 
-__version__ = '0.5.2'
+__version__ = '0.5.3'
 
 __all__ = ['Processor', 'Mapper', 'Reducer', '__version__', 'MapperComposer', 'ReducerComposer']
