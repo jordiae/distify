@@ -463,7 +463,7 @@ class Processor:
         return self.reduced
 
     @staticmethod
-    def _map_f(args):
+    def _map_f(*args):
         return G.F_MAPPERS(args)
 
     @staticmethod
@@ -484,6 +484,6 @@ class Processor:
 
 # TODO: if Ray, add working directory to path
 
-__version__ = '0.5.3'
+__version__ = '0.5.4'
 
 __all__ = ['Processor', 'Mapper', 'Reducer', '__version__', 'MapperComposer', 'ReducerComposer']
