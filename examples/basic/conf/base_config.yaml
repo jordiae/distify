@@ -12,16 +12,10 @@ hydra:
 
 distify:
   # can be : 'ray', 'mp' (multiprocessing), 'mt' (multithreading), 'seq' (sequential, for debugging). 'ray' is recommended
-  parallel_backend: 'mp'
-  parallelize_checkpoint_retrieval: False
-  # checkpoint_frequency: 10
+  parallel_backend: 'seq'
   requires_order: False
-  timeout: null  #  timeout in seconds for each individual map application (doesn't work with time.sleep())
-  log_frequency: 10
   chunksize: 1
   timeout1: 100
   timeout2: 10
   mp_context: 'spawn'
   max_tasks: 1000
-  use_checkpoint_sql: False
-  txt_checkpoint_path: 'test.txt'
