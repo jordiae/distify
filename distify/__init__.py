@@ -129,8 +129,8 @@ class Mapper(Worker):
         raise NotImplementedError
 
     def __call__(self, chunk) -> TaskResult:
-        #if len(chunk) == 1:
-        #    chunk = chunk[0]
+        if len(chunk) == 1:
+            chunk = chunk[0]
         chunk = list(zip(*chunk))
         idxs = chunk[0]
         chunk = chunk[1]
