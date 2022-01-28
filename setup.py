@@ -36,7 +36,7 @@ setup(
         'tqdm',
         'aiohttp==3.7',
         'sqlitedict',
-        'ordered_set'
+        'ordered-set'
     ]
 
 )
