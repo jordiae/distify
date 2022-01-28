@@ -5,10 +5,13 @@ from omegaconf import DictConfig
 from dataclasses import dataclass
 from hydra.core.config_store import ConfigStore
 from pprint import pformat
-from distify import Mapper, Processor, Reducer, ReducerResult, MapperResult
-from distify.contrib import SimpleCheckpointReducer, ReducerComposer
+from distify import Mapper, Processor
+from ordered_set import OrderedSet
+from distify.contrib import Checkpoint, Reducer
 
 log = logging.getLogger(__name__)
+
+DUMMY_INPUT = list(range(0, 10_000))
 
 
 @dataclass
@@ -18,14 +21,8 @@ class MyMapperConfig:
 
 
 @dataclass
-class MyReducerConfig:
-    pass
-
-
-@dataclass
 class MyAppConfig:
     mapper: MyMapperConfig
-    reducer: MyReducerConfig
 
 
 def register_configs():
@@ -54,52 +51,63 @@ class MyMapper(Mapper):
         return x
 
 
-# Reduction is optional
-class MyReducer(Reducer):
-    def __init__(self, cfg: MyReducerConfig):
-        super().__init__()
-        self.cfg = cfg
-
-    @property
-    def default_value(self):
-        return 0
-
-    def reduce(self, store, values: MapperResult):
-        result = store + sum(values.input)
-        log_message = f'Reduced so far: {result}'
-        return ReducerResult(result=result, log_message=log_message)
-
-
 def generate_dummy_input():
     path = os.path.join(os.path.dirname(__file__), 'dummy_input.txt')
     if not os.path.exists(path):
         with open(path, 'w') as f:
-            f.writelines(list(map(lambda x: f'{x}\n', list(range(0, 10_000)))))
+            f.writelines(list(map(lambda x: f'{x}\n', DUMMY_INPUT)))
     return path
+
+
+def load_inputs(path):
+    with open(path, 'r') as f:
+        inputs = f.readlines()
+    inputs = list(map(int, inputs))
+    return inputs
+
+
+class MyReducer(Reducer):
+    def reduce(self, item, store):
+        return item + store
+
+    @property
+    def default_value(self):
+        return 0
 
 
 @hydra.main(config_path="conf", config_name="base_config")
 def main(cfg: DictConfig) -> None:
     logging.info(pformat(cfg))
     logging.info(os.getcwd())
-    # Again, reducer_class and reducer_args arguments are optional!
-    # Stream must be list, not generator
+    # Again, reducer_class and reducer_args arguments are optional. Stream must be list, not generator
     original_input_path = generate_dummy_input()
-    if SimpleCheckpointReducer.exists():
-        inputs, current_reduced = SimpleCheckpointReducer.load(original_input_path)
+    reducer = MyReducer()
+    if Checkpoint.exists(os.getcwd()):
+        logging.info(f'Resuming from checkpoint: {os.getcwd()}')
+        checkpoint = Checkpoint(path=os.getcwd())
+        logging.info(f'Last processed item was {checkpoint.data["done"][-1]}')
+        items_to_do = checkpoint.get_not_done_items()
+        reduced = checkpoint.get_reduced()
     else:
-        with open(original_input_path, 'r') as f:
-            inputs = f.readlines()
-        inputs = list(map(int, inputs))
-        current_reduced = None
-    processor = Processor(inputs=inputs, current_reduced=current_reduced, mapper_class=MyMapper,
-                          mapper_args=[cfg.app.mapper],
-                          cfg=cfg.distify, reducer_class=ReducerComposer,  # The checkpoint reducer should always be the last one
-                          reducer_args=[[MyReducer, SimpleCheckpointReducer], [[cfg.app.reducer], []]])
-    reduced = processor.run()
-    assert reduced == sum(list(range(0, 10_000)))
+        logging.info(f'Starting execution from scratch in: {os.getcwd()}')
+        inputs = OrderedSet(load_inputs(original_input_path))
+        checkpoint = Checkpoint(path=os.getcwd(), all_items=inputs)
+        items_to_do = inputs
+        reduced = reducer.default_value
+    for processed_mapper_result, pbar in Processor(inputs=items_to_do, mapper_class=MyMapper,
+                                                   mapper_args=[cfg.app.mapper], cfg=cfg.distify).run():
+        pbar.set_description(f'Hello!')
+        if not processed_mapper_result.error and processed_mapper_result.input:
+            for idx, inp in enumerate(processed_mapper_result.input):
+                checkpoint.add_processed_item(inp)
+                reduced = reducer.reduce(item=processed_mapper_result.result[idx], store=reduced)
+                checkpoint.set_reduced(reduced)
+
+    # processor.run()
+    print(reduced, sum(DUMMY_INPUT))
+    assert reduced == sum(DUMMY_INPUT)
     logging.info('Finished execution correctly')
-    logging.info(pformat(reduced))
+    # logging.info(pformat(reduced))
 
 
 if __name__ == '__main__':

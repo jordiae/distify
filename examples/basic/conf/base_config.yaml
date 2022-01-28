@@ -12,9 +12,8 @@ hydra:
 
 distify:
   # can be : 'ray', 'mp' (multiprocessing), 'mt' (multithreading), 'seq' (sequential, for debugging). 'ray' is recommended
-  parallel_backend: 'seq'
-  requires_order: False
-  chunksize: 1
+  parallel_backend: 'mp'
+  chunksize: 2
   timeout1: 100
   timeout2: 10
   mp_context: 'spawn'
