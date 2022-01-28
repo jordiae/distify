@@ -35,7 +35,8 @@ setup(
         'hydra-ray-launcher',
         'tqdm',
         'aiohttp==3.7',
-        'sqlitedict'
+        'sqlitedict',
+        'ordered_set'
     ]
 
 )
