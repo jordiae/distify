@@ -1,5 +1,5 @@
-from ._core import Processor, Mapper, Reducer, DistifyConfig, ReducerResult, MapperResult
+from ._core import Processor, Mapper, MapperResult, DistifyConfig
 
-__version__ = '0.6.0'
+__version__ = '0.7.0'
 
-__all__ = ['Processor', 'Mapper', 'Reducer', 'ReducerResult', 'MapperResult', '__version__']
+__all__ = ['Processor', 'Mapper', 'MapperResult', '__version__']

@@ -54,11 +54,12 @@ class MapperResult:
 @dataclass
 class DistifyConfig:
     parallel_backend: ParallelBackend
-    chunksize: int
     timeout1: int
     timeout2: int
     mp_context: str
     max_tasks: int
+    chunksize: Optional[int] = None
+
 
 def register_configs():
     cs = ConfigStore.instance()
@@ -101,8 +102,6 @@ class Mapper(Worker):
         raise NotImplementedError
 
     def __call__(self, chunk: List[Tuple[int, T]]) -> MapperResult:
-        #if len(chunk) == 1:
-        #    chunk = chunk[0]
         chunk = list(zip(*chunk))
         idxs = chunk[0]
         chunk = chunk[1]
@@ -113,36 +112,13 @@ class Mapper(Worker):
         return res
 
 
-@dataclass
-class ReducerResult:
-    result: Any
-    log_message: Optional[str]
-
-
-class Reducer(Worker):
-
-    def reduce(self, store, values: List[MapperResult]) -> ReducerResult:
-        raise NotImplementedError
-    
-    @property
-    def default_value(self):
-        raise NotImplementedError
-
-    def __call__(self, store, values):
-        if store is None:
-            store = self.default_value
-        values = list(filter(lambda x: x is not None, values.result))
-        if len(values) == 0:
-            values = [self.default_value]
-        return self.reduce(store, values)
-
-
 class DummySyncResult:
     def __init__(self, result):
         self.result = result
 
     def get(self, timeout):
         return self.result
+
 
 @contextlib.contextmanager
 def SingleProcessPool(initializer, initargs):
@@ -162,26 +138,27 @@ def SingleProcessPool(initializer, initargs):
             return list(map(f, l))
 
         def apply_async(self, f, x):
-            return DummySyncResult(f(x))
+            return DummySyncResult(f(*x))
 
     yield NullPool()
 
     # TODO: Close?
 
 
-
 class Processor:
-    def __init__(self, cfg: DistifyConfig, inputs: OrderedSet, mapper_class, mapper_args=(), reducer_class=None, reducer_args=(),
-                 current_reduced: Optional = None):
+    def __init__(self, cfg: DistifyConfig, inputs: OrderedSet, mapper_class, mapper_args=()):
         self.cfg = cfg
         self.inputs = inputs
         self.mapper_class = mapper_class
         self.mapper_args = mapper_args
-        self.reducer_class = reducer_class
-        self.reducer_args = reducer_args
         self.logger = logging.getLogger('DISTIFY MAIN')
-        self.current_reduced = current_reduced
-        self.reduce = None
+
+    @staticmethod
+    def _default_chunksize(iterable, n_pool):
+        chunksize, extra = divmod(len(iterable), len(n_pool) * 4)
+        if extra:
+            chunksize += 1
+        return chunksize
 
     def get_n_cpus(self):
         if self.cfg.parallel_backend == ParallelBackend.SEQ:
@@ -204,30 +181,23 @@ class Processor:
             pool = SingleProcessPool
         return pool
 
-    def process_mapper_result(self, mapper_result, pbar, current_reduced, iteration):
+    def process_mapper_result(self, mapper_result, pbar, iteration):
         if isinstance(mapper_result, BaseException):
-            self.logger.info(f'Error in mapper: {str(mapper_result)}')
-            reduced = None
+            # self.logger.info(f'Error in mapper: {str(mapper_result)}')
+            mapper_result = MapperResult(result=None, error=mapper_result, idx=None, input=None)
         elif isinstance(mapper_result.error, BaseException):
-            self.logger.info(f'Error in mapper: {str(mapper_result.error)}')
-            reduced = None
+            # self.logger.info(f'Error in mapper: {str(mapper_result.error)}')
+            mapper_result = mapper_result
         elif isinstance(mapper_result, MapperResult):
             idx = mapper_result.idx
             work_done = len(idx)
             pbar.update(work_done)
             for i in idx:
                 self.not_done_list[i] = False
-
-            if self.reducer_class:
-                reduce_result = self._reduce_f(current_reduced, mapper_result)
-                reduced = reduce_result.result
-                log_message = reduce_result.log_message
-                if log_message:
-                    pbar.set_description(log_message)
-                    # TODO: Also log log_message, but only to file, not to console
         else:
+            # Should never happen
             raise RuntimeError('Unknown mapper_result type')
-        return reduced
+        return mapper_result
 
     def run(self):
         work_dir = os.getcwd()
@@ -242,6 +212,8 @@ class Processor:
         nproc = self.get_n_cpus()
         assert self.cfg.max_tasks >= nproc
 
+        chunksize = self.cfg.chunksize if self.cfg.chunksize else self._default_chunksize(self.inputs, nproc)
+
         n_not_done = sum(self.not_done_list)
         with tqdm(initial=initial, total=total) as pbar:
             while n_not_done > 0:
@@ -251,13 +223,11 @@ class Processor:
                 with pool(initializer=self._initialize, initargs=(self.mapper_class.factory, work_dir,
                                                                   self.mapper_args,
                                                                   )) as p:
-                    
-                    if not self.reduce and self.reducer_class:
-                        self.reduce = self.reducer_class.factory(self.reducer_args)
+
                     chunks = []
                     current_chunk = []
                     for i in range(len(self.inputs)):
-                        if len(current_chunk) == self.cfg.chunksize:
+                        if len(current_chunk) == chunksize:
                             chunks.append(current_chunk)
                             current_chunk = []
                             if len(chunks) == self.cfg.max_tasks:
@@ -273,15 +243,17 @@ class Processor:
                     for iteration, task in enumerate(tasks):
                         try:
                             mapper_result = task.get(timeout=self.cfg.timeout1)
-                            self.current_reduced = self.process_mapper_result(mapper_result, pbar, iteration=iteration,
-                                                                            current_reduced=self.current_reduced)
+                            processed_mapper_result = self.process_mapper_result(mapper_result, pbar,
+                                                                                 iteration=iteration)
+                            yield processed_mapper_result, pbar,  # iteration
                         except TimeoutError:
                             failed.append(task)
                             for task in failed:
                                 try:
                                     mapper_result = task.get(timeout=self.cfg.timeout2)
-                                    self.current_reduced = self.process_mapper_result(mapper_result, pbar, iteration=iteration,
-                                                                                    current_reduced=self.current_reduced)
+                                    processed_mapper_result = self.process_mapper_result(mapper_result, pbar,
+                                                                                         iteration=iteration)
+                                    yield processed_mapper_result, pbar  # iteration
                                 except TimeoutError:
                                     continue
 
@@ -290,14 +262,10 @@ class Processor:
                                                  f"but {nproc - len(failed)} remain.")
                             else:
                                 break
-        return self.current_reduced
 
     @staticmethod
-    def _map_f(args):
+    def _map_f(*args):
         return G.F_MAPPERS(args)
-
-    def _reduce_f(self, store, values):
-        return self.reduce(store, values)
 
     @staticmethod
     def _initialize(mapper_factory, work_dir, mapper_args):
