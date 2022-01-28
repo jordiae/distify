@@ -1,1 +1,1 @@
-distify==0.4.0
+distify==0.7.0
