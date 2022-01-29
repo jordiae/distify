@@ -95,7 +95,9 @@ def main(cfg: DictConfig) -> None:
         items_to_do = inputs
         reduced = reducer.default_value
     for processed_mapper_result, pbar in Processor(inputs=items_to_do, mapper_class=MyMapper,
-                                                   mapper_args=[cfg.app.mapper], cfg=cfg.distify).run():
+                                                   mapper_args=[cfg.app.mapper], cfg=cfg.distify,
+                                                   initial_bar=checkpoint.get_n_done(),
+                                                   total_bar=checkpoint.get_n_total()).run():
         pbar.set_description(f'Hello!')
         if not processed_mapper_result.error and processed_mapper_result.input:
             for idx, inp in enumerate(processed_mapper_result.input):

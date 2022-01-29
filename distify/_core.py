@@ -54,10 +54,10 @@ class MapperResult:
 @dataclass
 class DistifyConfig:
     parallel_backend: ParallelBackend
-    timeout1: int
-    timeout2: int
-    mp_context: str
-    max_tasks: int
+    timeout1: Optional[int] = None
+    timeout2: Optional[int] = None
+    mp_context: str = 'fork'
+    max_tasks: Optional[int] = None
     chunksize: Optional[int] = None
 
 
@@ -183,7 +183,7 @@ class Processor:
             pool = SingleProcessPool
         return pool
 
-    def process_mapper_result(self, mapper_result, pbar, iteration):
+    def process_mapper_result(self, mapper_result, pbar, iteration, with_restart):
         if isinstance(mapper_result, BaseException):
             # self.logger.info(f'Error in mapper: {str(mapper_result)}')
             mapper_result = MapperResult(result=None, error=mapper_result, idx=None, input=None)
@@ -194,8 +194,9 @@ class Processor:
             idx = mapper_result.idx
             work_done = len(idx)
             pbar.update(work_done)
-            for i in idx:
-                self.not_done_list[i] = False
+            if with_restart:
+                for i in idx:
+                    self.not_done_list[i] = False
         else:
             # Should never happen
             raise RuntimeError('Unknown mapper_result type')
@@ -206,8 +207,8 @@ class Processor:
 
         self.not_done_list = [True for _ in self.inputs]
 
-        initial = len(self.inputs) - sum(self.not_done_list)
-        total = len(self.inputs)
+        # initial = len(self.inputs) - sum(self.not_done_list)
+        # total = len(self.inputs)
 
         pool = self.get_pool()
 
@@ -217,7 +218,7 @@ class Processor:
         chunksize = self.cfg.chunksize if self.cfg.chunksize else self._default_chunksize(self.inputs, nproc)
 
         n_not_done = sum(self.not_done_list)
-        with tqdm(initial=initial, total=total) as pbar:
+        with tqdm(initial=self.initial_bar, total=self.total_bar) as pbar:
             while n_not_done > 0:
                 n_not_done = sum(self.not_done_list)
                 self.logger.info(f"Restarting Pool. {n_not_done} elements to go.")
@@ -246,7 +247,7 @@ class Processor:
                         try:
                             mapper_result = task.get(timeout=self.cfg.timeout1)
                             processed_mapper_result = self.process_mapper_result(mapper_result, pbar,
-                                                                                 iteration=iteration)
+                                                                                 iteration=iteration, with_restart=True)
                             yield processed_mapper_result, pbar,  # iteration
                         except TimeoutError:
                             failed.append(task)
@@ -254,7 +255,7 @@ class Processor:
                                 try:
                                     mapper_result = task.get(timeout=self.cfg.timeout2)
                                     processed_mapper_result = self.process_mapper_result(mapper_result, pbar,
-                                                                                         iteration=iteration)
+                                                                                         iteration=iteration, with_restart=True)
                                     yield processed_mapper_result, pbar  # iteration
                                 except TimeoutError:
                                     continue
@@ -268,24 +269,20 @@ class Processor:
     def run(self):
         work_dir = os.getcwd()
 
-        initial = len(self.inputs) - sum(self.not_done_list)
-        total = len(self.inputs)
-
         pool = self.get_pool()
 
         nproc = self.get_n_cpus()
         assert self.cfg.max_tasks >= nproc
 
-        chunksize = self.cfg.chunksize if self.cfg.chunksize else self._default_chunksize(self.inputs, nproc)
+        chunksize = self.cfg.chunksize if self.cfg.chunksize else None
 
-        with pool(initializer=self._initialize, initargs=(self.mapper_class.factory, work_dir, self.mapper_args,
-                                                              )) as p:
+        with pool(initializer=self._initialize, initargs=(self.mapper_class.factory, work_dir, self.mapper_args,)) as p:
+            res = p.imap_unordered(self._map_f, [(idx, inp) for idx, inp in enumerate(self.inputs)],
+                                   chunksize=chunksize)
 
-            res = p.imap_unordered(self._map_f, new_stream, chunksize=self.cfg.chunksize)
-
-            pbar = tqdm(res, initial=len(self.inputs) - len(new_stream), total=len(self.inputs))
+            pbar = tqdm(res, initial=self.initial_bar, total=self.total_bar)
             for idx, e in enumerate(pbar):
-                processed_mapper_result = self.process_mapper_result(e, pbar, idx)
+                processed_mapper_result = self.process_mapper_result(e, pbar, idx, with_restart=False)
                 yield processed_mapper_result, pbar,  # iteration
 
     @staticmethod
