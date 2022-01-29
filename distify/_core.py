@@ -146,9 +146,11 @@ def SingleProcessPool(initializer, initargs):
 
 
 class Processor:
-    def __init__(self, cfg: DistifyConfig, inputs: OrderedSet, mapper_class, mapper_args=()):
+    def __init__(self, cfg: DistifyConfig, inputs: OrderedSet, initial_bar, total_bar, mapper_class, mapper_args=(),):
         self.cfg = cfg
         self.inputs = inputs
+        self.initial_bar = initial_bar
+        self.total_bar = total_bar
         self.mapper_class = mapper_class
         self.mapper_args = mapper_args
         self.logger = logging.getLogger('DISTIFY MAIN')
@@ -199,7 +201,7 @@ class Processor:
             raise RuntimeError('Unknown mapper_result type')
         return mapper_result
 
-    def run(self):
+    def run_with_restart(self):
         work_dir = os.getcwd()
 
         self.not_done_list = [True for _ in self.inputs]
@@ -262,6 +264,29 @@ class Processor:
                                                  f"but {nproc - len(failed)} remain.")
                             else:
                                 break
+
+    def run(self):
+        work_dir = os.getcwd()
+
+        initial = len(self.inputs) - sum(self.not_done_list)
+        total = len(self.inputs)
+
+        pool = self.get_pool()
+
+        nproc = self.get_n_cpus()
+        assert self.cfg.max_tasks >= nproc
+
+        chunksize = self.cfg.chunksize if self.cfg.chunksize else self._default_chunksize(self.inputs, nproc)
+
+        with pool(initializer=self._initialize, initargs=(self.mapper_class.factory, work_dir, self.mapper_args,
+                                                              )) as p:
+
+            res = p.imap_unordered(self._map_f, new_stream, chunksize=self.cfg.chunksize)
+
+            pbar = tqdm(res, initial=len(self.inputs) - len(new_stream), total=len(self.inputs))
+            for idx, e in enumerate(pbar):
+                processed_mapper_result = self.process_mapper_result(e, pbar, idx)
+                yield processed_mapper_result, pbar,  # iteration
 
     @staticmethod
     def _map_f(*args):
