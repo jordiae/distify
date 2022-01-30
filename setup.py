@@ -10,7 +10,7 @@ README = (HERE / "README.md").read_text()
 # This call to setup() does all the work
 setup(
     name="distify",
-    version="0.8.3",
+    version="0.8.4",
     description="Easy wrapper for parallelizing Python executions",
     long_description=README,
     long_description_content_type="text/markdown",
@@ -34,7 +34,7 @@ setup(
         'hydra-core',
         'hydra-ray-launcher',
         'tqdm',
-        'aiohttp==3.7',
+        'aiohttp>=3.7',
         'sqlitedict',
         'ordered-set'
     ]
