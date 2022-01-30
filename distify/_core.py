@@ -47,11 +47,11 @@ G = Globals()
 class dmap:
     def __init__(self, inputs: OrderedSet, inputs_done: OrderedSet, mapper: Union[type, Callable],
                  mapper_args: Optional[Iterable] = None, chunksize=1,
-                 par_backend='seq', mp_context='fork', ray_init_args=()):
+                 par_backend='seq', mp_context='fork', ray_init_kwargs=None):
 
         self.par_backend = par_backend
         self.mp_context = mp_context
-        self.ray_init_args = ray_init_args
+        self.ray_init_kwargs = ray_init_kwargs
 
         initial_bar_len = len(inputs_done)
         total_bar_len = len(inputs)
@@ -105,7 +105,10 @@ class dmap:
     def _get_pool_class(self, context_manager=True):
         if self.par_backend == ParallelBackend.RAY:
             if not ray.is_initialized():
-                ray.init(self.ray_init_args)
+                if self.ray_init_kwargs:
+                    ray.init(**self.ray_init_kwargs)
+                else:
+                    ray.init(address='auto')
             pool = RayPool
         elif self.par_backend == ParallelBackend.MP:
             pool = multiprocessing.get_context(self.mp_context).Pool  # spawn
