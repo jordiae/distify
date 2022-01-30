@@ -13,13 +13,9 @@ hydra:
 distify:
   # Always relevant
   # can be : 'ray', 'mp' (multiprocessing), 'mt' (multithreading), 'seq' (sequential, for debugging). 'ray' is recommended
-  parallel_backend: 'seq'
+  par_backend: 'seq'
   chunksize: 1
 
   # Only relevant if mp
   mp_context: 'spawn'
 
-  # Only relevant if run_with_restart()
-  timeout1: 100
-  timeout2: 10
-  max_tasks: 1000

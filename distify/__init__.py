@@ -1,5 +1,5 @@
-from ._core import Processor, Mapper, MapperResult, DistifyConfig
+from ._core import dmap
 
-__version__ = '0.7.2'
+__version__ = '0.8.0'
 
-__all__ = ['Processor', 'Mapper', 'MapperResult', '__version__']
+__all__ = ['dmap', '__version__']

@@ -1,34 +1,43 @@
 from sqlitedict import SqliteDict
 import os
-from typing import Set, Optional
+from typing import Optional
 from ordered_set import OrderedSet
-import signal
+import time
+import uuid
+from hydra.core.config_store import ConfigStore
+from dataclasses import dataclass
 
 
-class Checkpoint:
-    def __init__(self, path, all_items: Optional[OrderedSet] = None):
-        signal.signal(signal.SIGINT, self.exit_gracefully)
-        signal.signal(signal.SIGTERM, self.exit_gracefully)
-
-        self.data = SqliteDict(os.path.join(path, 'checkpoint.db'), autocommit=True)
+class CheckpointSet:
+    def __init__(self, path, inputs: Optional[OrderedSet]):
+        self.data = SqliteDict(os.path.join(path, 'checkpoint.db'), autocommit=True, tablename='checkpoint')
         if 'done' not in self.data:
             self.data['done'] = OrderedSet([])
-            assert all_items is not None
-            self.data['all_items'] = all_items
+            assert inputs is not None
+            self.data['all_items'] = inputs
         else:
-            assert all_items is None
+            assert inputs is None
             assert 'all_items' in self.data
         if 'reduced' not in self.data:
             self.data['reduced'] = None
 
-    def exit_gracefully(self, *args):
-        self.data.close()
+    @classmethod
+    def load(cls, path):
+        return cls(path, inputs=None)
+
+    @property
+    def inputs(self):
+        return self.data['all_items']
+
+    @property
+    def inputs_done(self):
+        return self.data['done']
 
     @staticmethod
     def exists(path):
         return os.path.exists(os.path.join(path, 'checkpoint.db'))
 
-    def add_processed_item(self, item):
+    def mark_as_done(self, item):
         done = self.data['done']
         done.add(item)
         self.data['done'] = done
@@ -39,20 +48,56 @@ class Checkpoint:
     def get_reduced(self):
         return self.data['reduced']
 
-    def get_not_done_items(self):
-        return self.data['done'].intersection(self.data['all_items'])
+class CheckpointMask:
+    def __init__(self, path, inputs: Optional[OrderedSet]):
+        self.data = SqliteDict(os.path.join(path, 'checkpoint.db'), autocommit=True, tablename='checkpoint')
+        if inputs:
+            for inp in inputs:
+                self.data[inp] = (False, inp)  # Not done. Note that e.g. ints, in keys, are stored as strings...
+            self.data['__reduced__'] = None
 
-    def get_n_done(self):
-        return len(self.data['done'])
-
-    def get_n_total(self):
-        return len(self.data['all_items'])
-
-
-class Reducer:
-    def reduce(self, item, store):
-        raise NotImplementedError
+    @classmethod
+    def load(cls, path):
+        return cls(path, inputs=None)
 
     @property
-    def default_value(self):
-        raise NotImplementedError
+    def inputs_to_do(self):
+        return OrderedSet([self.data[item][1] for item in self.data if item != '__reduced__' and not self.data[item][0]])
+
+    @property
+    def inputs_done(self):
+        return OrderedSet([self.data[item][1] for item in self.data if item != '__reduced__' and self.data[item][0]])
+
+    @staticmethod
+    def exists(path):
+        return os.path.exists(os.path.join(path, 'checkpoint.db'))
+
+    def mark_as_done(self, item):
+        self.data[item] = (item, True)
+
+    def set_reduced(self, result):
+        self.data['__reduced__'] = result
+
+    def get_reduced(self):
+        return self.data['__reduced__']
+
+@dataclass
+class DistifyConfig: pass
+
+def register_configs():
+    cs = ConfigStore.instance()
+    cs.store(
+        name="config",
+        node=DistifyConfig,
+    )
+
+
+register_configs()
+
+def get_process_unique_path():
+    def timestamp():
+        return time.strftime("%Y-%m-%d-%H%M")
+    process_id = os.uname()[1] + '_' + str(os.getpid())
+    ts = timestamp()
+    extra_id = uuid.uuid4().hex
+    return os.path.join(os.getcwd(), process_id + '_' + ts + '_' + extra_id)
