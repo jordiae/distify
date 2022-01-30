@@ -92,8 +92,6 @@ def main(cfg: DictConfig) -> None:
                                                                    ):
         if error:
             pbar.set_description('Error')
-            print(error)
-            exit()
         else:
             reduced = my_reduce(iterable=[output], initializer=reduced)
             pbar.set_description('OK')
@@ -101,10 +99,12 @@ def main(cfg: DictConfig) -> None:
         work_done.append(orig_input)
 
         if (new_idx + 1) % 1000 == 0:
-            checkpoint.mark_as_done(orig_input)
+            for orig_input in work_done:
+                checkpoint.mark_as_done(orig_input)
             checkpoint.set_reduced(reduced)
 
-    checkpoint.mark_as_done(orig_input)
+    for orig_input in work_done:
+        checkpoint.mark_as_done(orig_input)
     checkpoint.set_reduced(reduced)
 
     print(reduced, sum(DUMMY_INPUT))
