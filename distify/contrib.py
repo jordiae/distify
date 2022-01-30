@@ -54,7 +54,7 @@ class CheckpointMask:
         self.data = SqliteDict(os.path.join(path, 'checkpoint.db'), tablename='checkpoint')
         if inputs:
             for inp in inputs:
-                self.data[inp] = (False, inp)  # Not done. Note that e.g. ints, in keys, are stored as strings...
+                self.data[hash(inp)] = (False, inp)  # Not done. Note that e.g. ints, in keys, are stored as strings...
             self.data['__reduced__'] = None
             self.data.commit()
 
@@ -82,7 +82,7 @@ class CheckpointMask:
         return os.path.exists(os.path.join(path, 'checkpoint.db'))
 
     def mark_as_done(self, item):
-        self.data[item] = (True, item)
+        self.data[hash(item)] = (True, item)
 
     def set_reduced(self, result):
         self.data['__reduced__'] = result
