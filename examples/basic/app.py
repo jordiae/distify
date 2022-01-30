@@ -13,7 +13,7 @@ from omegaconf import OmegaConf
 
 log = logging.getLogger(__name__)
 
-DUMMY_INPUT = list(range(0, 100_000))
+DUMMY_INPUT = list(range(0, 20_000))
 
 
 @dataclass
@@ -53,8 +53,13 @@ def load_inputs(path):
     return inputs
 
 
-def my_reduce(iterable, initializer=0):
-    return sum(iterable) + initializer
+class MyReducer:
+    def __call__(self, iterable, initializer=0):
+        return sum(iterable) + initializer
+
+    @property
+    def default_value(self):
+        return 0
 
 
 class MyMapper:
@@ -78,10 +83,13 @@ def main(cfg: DictConfig) -> None:
     logging.info(f'hydra.run.dir={os.getcwd()}')
     input_path = generate_dummy_input()
     inputs = OrderedSet(load_inputs(input_path))
-    checkpoint = CheckpointMask.load('.') if CheckpointMask.exists('.') else CheckpointMask('.', inputs=inputs)
-    reduced = 0
-    work_done = []
-    for new_idx, orig_idx, orig_input, output, error, pbar in dmap(inputs=checkpoint.inputs_to_do,
+    reducer = MyReducer()
+    if CheckpointMask.exists('.'):
+        checkpoint = CheckpointMask.load('.')
+        reduced = checkpoint.get_reduced()
+    else:
+        checkpoint, reduced = CheckpointMask('.', inputs=inputs), reducer.default_value
+    for new_idx, orig_idx, orig_input, output, error, pbar in dmap(inputs=checkpoint.inputs,
                                                                    inputs_done=checkpoint.inputs_done,
                                                                    mapper=MyMapper,
                                                                    mapper_args=[cfg.app.mapper],
@@ -93,19 +101,16 @@ def main(cfg: DictConfig) -> None:
         if error:
             pbar.set_description('Error')
         else:
-            reduced = my_reduce(iterable=[output], initializer=reduced)
+            reduced = reducer(iterable=[output], initializer=reduced)
             pbar.set_description('OK')
 
-        work_done.append(orig_input)
+        checkpoint.mark_as_done(orig_input)
+        checkpoint.set_reduced(reduced)
 
         if (new_idx + 1) % 1000 == 0:
-            for orig_input in work_done:
-                checkpoint.mark_as_done(orig_input)
-            checkpoint.set_reduced(reduced)
+            checkpoint.commit()
 
-    for orig_input in work_done:
-        checkpoint.mark_as_done(orig_input)
-    checkpoint.set_reduced(reduced)
+    checkpoint.commit()
 
     print(reduced, sum(DUMMY_INPUT))
     assert reduced == sum(DUMMY_INPUT)

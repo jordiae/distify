@@ -48,13 +48,17 @@ class CheckpointSet:
     def get_reduced(self):
         return self.data['reduced']
 
+
 class CheckpointMask:
-    def __init__(self, path, inputs: Optional[OrderedSet]):
-        self.data = SqliteDict(os.path.join(path, 'checkpoint.db'), autocommit=True, tablename='checkpoint')
+    def __init__(self, path, inputs: Optional[OrderedSet], blocking=True):
+        self.data = SqliteDict(os.path.join(path, 'checkpoint.db'), tablename='checkpoint')
         if inputs:
             for inp in inputs:
                 self.data[inp] = (False, inp)  # Not done. Note that e.g. ints, in keys, are stored as strings...
             self.data['__reduced__'] = None
+            self.data.commit()
+
+        self.blocking = blocking
 
     @classmethod
     def load(cls, path):
@@ -65,6 +69,11 @@ class CheckpointMask:
         return OrderedSet([self.data[item][1] for item in self.data if item != '__reduced__' and not self.data[item][0]])
 
     @property
+    def inputs(self):
+        return OrderedSet(
+            [self.data[item][1] for item in self.data if item != '__reduced__'])
+
+    @property
     def inputs_done(self):
         return OrderedSet([self.data[item][1] for item in self.data if item != '__reduced__' and self.data[item][0]])
 
@@ -73,13 +82,16 @@ class CheckpointMask:
         return os.path.exists(os.path.join(path, 'checkpoint.db'))
 
     def mark_as_done(self, item):
-        self.data[item] = (item, True)
+        self.data[item] = (True, item)
 
     def set_reduced(self, result):
         self.data['__reduced__'] = result
 
     def get_reduced(self):
         return self.data['__reduced__']
+
+    def commit(self):
+        self.data.commit(blocking=self.blocking)
 
 @dataclass
 class DistifyConfig: pass

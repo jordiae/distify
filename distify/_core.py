@@ -53,6 +53,9 @@ class dmap:
         self.mp_context = mp_context
         self.ray_init_args = ray_init_args
 
+        initial_bar_len = len(inputs_done)
+        total_bar_len = len(inputs)
+
         inputs_to_do = inputs - inputs_done
 
         work_dir = os.getcwd()
@@ -66,8 +69,7 @@ class dmap:
 
         res = self.pool.imap_unordered(self._map_f, [(idx, inp) for idx, inp in enumerate(inputs_to_do)],
                                        chunksize=chunksize)
-
-        self.pbar = tqdm(res, initial=len(inputs_done), total=len(inputs))
+        self.pbar = tqdm(res, initial=initial_bar_len, total=total_bar_len)
 
     def __iter__(self):
 
