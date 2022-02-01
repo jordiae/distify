@@ -62,7 +62,7 @@ class dmap:
 
         PoolClass = self._get_pool_class(context_manager=False)
 
-        nproc = self._get_n_cpus()
+        # nproc = self._get_n_cpus()
 
         self.pool = PoolClass(initializer=self._initialize, initargs=(_MapperWrapper.get_factory(mapper),
                                                                  work_dir, mapper_args,))
@@ -93,7 +93,7 @@ class dmap:
                 yield e
 
     def _get_n_cpus(self):
-        if self.par_backend == ParallelBackend.SEQ:
+        if self.par_backend == ParallelBackend.RAY:
             return int(ray.available_resources()['CPU'])
         elif self.par_backend == ParallelBackend.MP:
             return multiprocessing.cpu_count()
